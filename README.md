@@ -1,5 +1,14 @@
 # rose-offline
 
+This is a modified version of the rose offline server and files to support new functionality.
+
+New features:
+MCP and REST API to have bots in game controlled by LLM
+
+ORIGINAL SOURCE HERE:
+https://github.com/exjam/rose-offline/
+
+
 An open source server for ROSE Online, compatible with the official 129_129en irose client or [rose-offline-client](https://github.com/exjam/rose-offline-client).
 
 # Running the server
