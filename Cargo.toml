@@ -1,0 +1,72 @@
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["James Benton <james.benton2@gmail.com>"]
+
+[workspace]
+resolver = "2"
+members = [
+    "rose-data",
+    "rose-data-irose",
+    "rose-file-readers",
+    "rose-game-common",
+    "rose-game-irose",
+    "rose-network-common",
+    "rose-network-irose",
+    "rose-offline-server",
+    "rose-offline-tools/rose-conv",
+    "rose-offline-tools/rose-vfs-dump",
+    "rose-mcp-server",
+]
+
+[workspace.dependencies]
+aes = "0.8.1"
+anyhow = "1.0"
+arrayvec = "0.7"
+async-trait = "0.1"
+bevy = { version = "0.16", default-features = true }
+big-brain = { git = "https://github.com/zkat/big-brain.git", rev = "7d3911c15078db332b97a91886de02d8c9bdd9b4", features = [] }
+bitflags = "2.3"
+bitvec = { version = "1.0", features = ["serde"] }
+bytes = "1.1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = "3.2"
+crossbeam-channel = "0.5"
+ctr = "0.9.1"
+directories = "5.0.1"
+encoding_rs = "0.8"
+enum-map = { version = "2.0", features = ["serde"] }
+flate2 = "1.0"
+hex = "0.4"
+lazy_static = "1.4"
+log = "0.4"
+md5 = "0.7"
+memmap = "0.7"
+modular-bitfield = "0.11"
+num-derive = "0.4"
+num-traits = "0.2"
+rand = "0.8"
+schemars = "0.8"
+scopeguard = "1.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+sha2 = "0.10"
+shellwords = "1.1"
+simplelog = "0.12"
+tempfile = "3.3"
+thiserror = "1.0"
+tokio = { version = "1.17", default-features = false, features = ["rt", "rt-multi-thread", "net", "sync", "macros", "io-util"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+parking_lot = "0.12"
+
+[patch.crates-io]
+#bevy = { git = "https://github.com/exjam/bevy", rev = "b3b09ca110d42b406e7453ccda8394bc1b03440c" }
+# Patch big-brain to use a Bevy0.16 compatible version from a fork
+# big-brain = { git = "https://github.com/your-fork/big-brain", branch = "bevy-0.16" }
+
+[profile.dev.package."*"]
+opt-level = 3

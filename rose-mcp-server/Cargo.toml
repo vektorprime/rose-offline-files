@@ -1,0 +1,40 @@
+[package]
+name = "rose-mcp-server"
+version = "0.1.0"
+edition = "2021"
+description = "MCP Server for LLM Buddy Bot Control in ROSE Online"
+authors = ["ROSE Offline Team"]
+
+[dependencies]
+# MCP Protocol - using rmcp crate with transport-io feature
+rmcp = { version = "0.17", features = ["transport-io"] }
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# HTTP client for REST API
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# UUID support
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# CLI arguments
+clap = { version = "4.0", features = ["derive", "env"] }
+
+# Async trait support
+async-trait = "0.1"
+
+# Schemars for JSON schema generation
+schemars = "0.8"

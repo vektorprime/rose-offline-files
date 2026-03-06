@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/rose-data-irose/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rose-data/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rose-file-readers/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rose-game-common/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rose-game-irose/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rose-network-common/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rose-network-irose/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rose-offline-server/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rose-offline-tools/rose-conv/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/rose-offline-tools/rose-vfs-dump/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>
