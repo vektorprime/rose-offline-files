@@ -1,0 +1,24 @@
+[package]
+name = "big-brain"
+version = "0.23.0"
+authors = ["Kat Marchán <kzm@zkat.tech>"]
+edition = "2021"
+description = "Rusty Utility AI library"
+exclude = ["assets/"]
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["utility-ai", "bevy", "ai", "ecs"]
+categories = ["game-development"]
+repository = "https://github.com/zkat/big-brain"
+homepage = "https://github.com/zkat/big-brain"
+
+[dependencies]
+bevy = { version = "0.18.1", default-features = false, features = ["bevy_log"] }
+big-brain-derive = { version = "=0.23.0", path = "./derive" }
+
+[dev-dependencies]
+bevy = { version = "0.16.0", default-features = true }
+rand = { version = "0.8.5", features = ["small_rng"] }
+
+[features]
+trace = []
