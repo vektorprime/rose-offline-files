@@ -331,6 +331,15 @@ pub fn spend_skill_points(
         mana_points: Some(&bot_data.mana_points),
     };
 
+    spend_skill_points_with_bundle(game_data, bot_build, &mut skill_list_bundle);
+}
+
+pub fn spend_skill_points_with_bundle(
+    game_data: &GameData,
+    bot_build: &BotBuild,
+    skill_list_bundle: &mut SkillListBundle,
+) {
+
     'next_skill: loop {
         // Try find first skill that we can learn
         for base_skill_id in bot_build.skills.iter() {
@@ -342,7 +351,7 @@ pub fn spend_skill_points(
                 continue; // Already learnt
             }
 
-            if skill_list_try_learn_skill(game_data, &mut skill_list_bundle, *base_skill_id).is_ok()
+            if skill_list_try_learn_skill(game_data, skill_list_bundle, *base_skill_id).is_ok()
             {
                 continue 'next_skill;
             }
@@ -357,7 +366,7 @@ pub fn spend_skill_points(
                 continue; // Not learnt yet
             };
 
-            if skill_list_try_level_up_skill(game_data, &mut skill_list_bundle, skill_slot).is_ok()
+            if skill_list_try_level_up_skill(game_data, skill_list_bundle, skill_slot).is_ok()
             {
                 continue 'next_skill;
             }

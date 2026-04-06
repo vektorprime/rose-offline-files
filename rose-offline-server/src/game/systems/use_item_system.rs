@@ -236,6 +236,17 @@ fn use_inventory_item(
                             Some((item_slot, item.clone())),
                         ));
                     (false, false)
+                } else if matches!(skill_data.skill_type, SkillType::Immediate | SkillType::AreaTarget) {
+                    // For Immediate and AreaTarget skills, cast at caster's position without requiring a target
+                    // This handles scrolls that do damage to nearby monsters
+                    use_item_system_parameters
+                        .commands
+                        .entity(use_item_user.entity)
+                        .insert(NextCommand::with_cast_skill_target_self(
+                            skill_id,
+                            Some((item_slot, item.clone())),
+                        ));
+                    (false, false)
                 } else if matches!(skill_data.skill_type, SkillType::Warp) {
                     if let Some(zone_id) = skill_data.warp_zone_id {
                         // Check skill_data.required_planet - player must be on the required planet to use this item
