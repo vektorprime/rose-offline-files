@@ -1,6 +1,5 @@
 use bevy::{
-    ecs::prelude::{Commands, Entity, Query, Res, ResMut, Without},
-    prelude::EventWriter,
+    prelude::{Commands, Entity, MessageWriter, Query, Res, ResMut, Without},
 };
 use log::warn;
 
@@ -141,7 +140,7 @@ pub fn world_server_system(
     server_info_query: Query<&ServerInfo>,
     mut login_tokens: ResMut<LoginTokens>,
     game_data: Res<GameData>,
-    mut clan_events: EventWriter<ClanEvent>,
+    mut clan_events: MessageWriter<ClanEvent>,
 ) {
     world_client_query.iter_mut().for_each(|(world_client, mut account, mut character_list)| {
         if let Ok(message) = world_client.client_message_rx.try_recv() {
@@ -298,7 +297,7 @@ pub fn world_server_system(
                 }
                 ClientMessage::ClanGetMemberList => {
                     if let Some(game_client_entity) = world_client.game_client_entity {
-                        clan_events.send(ClanEvent::GetMemberList {
+                        clan_events.write(ClanEvent::GetMemberList {
                             entity: game_client_entity,
                         });
                     }

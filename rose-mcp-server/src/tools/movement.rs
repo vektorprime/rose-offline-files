@@ -127,8 +127,8 @@ impl ToolHandler for FollowPlayerTool {
                     },
                     "distance": {
                         "type": "number",
-                        "description": "Distance to maintain from the player (default: 300)",
-                        "default": 300.0,
+                        "description": "Distance to maintain from the player (default: 50)",
+                        "default": 50.0,
                         "minimum": 50.0,
                         "maximum": 1000.0
                     }
@@ -151,7 +151,7 @@ impl ToolHandler for FollowPlayerTool {
 
         let request = FollowRequest {
             player_name: params.player_name.clone(),
-            distance: params.distance.unwrap_or(300.0),
+            distance: params.distance.unwrap_or(50.0),
         };
 
         match self.api_client.follow_player(&bot_id, request).await {
@@ -160,7 +160,7 @@ impl ToolHandler for FollowPlayerTool {
                 "message": format!("Bot {} is now following player '{}' at distance {}", 
                     bot_id, 
                     params.player_name,
-                    params.distance.unwrap_or(300.0)
+                    params.distance.unwrap_or(50.0)
                 )
             }))),
             Err(e) => Ok(format_error(format!("Failed to follow player: {}", e))),

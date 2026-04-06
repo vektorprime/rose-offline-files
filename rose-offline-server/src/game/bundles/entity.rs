@@ -235,7 +235,7 @@ impl ItemDropBundle {
             drop: ItemDrop::with_dropped_item(item),
             position: drop_position.clone(),
             entity_expire_time: EntityExpireTime::new(
-        std::time::Instant::now() + ITEM_DROP_ENTITY_EXPIRE_TIME,
+                std::time::Instant::now() + ITEM_DROP_ENTITY_EXPIRE_TIME,
             ),
         });
         let entity = entity_commands.id();
@@ -243,7 +243,7 @@ impl ItemDropBundle {
         if let Some(owner_entity) = owner_entity {
             entity_commands.insert((
                 Owner::new(owner_entity),
-OwnerExpireTime::new(std::time::Instant::now() + ITEM_DROP_OWNER_EXPIRE_TIME),
+                OwnerExpireTime::new(std::time::Instant::now() + ITEM_DROP_OWNER_EXPIRE_TIME),
             ));
         }
 

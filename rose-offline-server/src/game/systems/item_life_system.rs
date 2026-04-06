@@ -1,4 +1,4 @@
-use bevy::prelude::{EventReader, Query, Res};
+use bevy::prelude::{MessageReader, Query, Res};
 use rose_data::VehiclePartIndex;
 use rose_game_common::{components::ItemSlot, messages::server::ServerMessage};
 
@@ -9,7 +9,7 @@ use crate::game::{
 };
 
 pub fn item_life_system(
-    mut item_life_events: EventReader<ItemLifeEvent>,
+    mut item_life_events: MessageReader<ItemLifeEvent>,
     mut query: Query<(&AbilityValues, &mut Equipment, Option<&GameClient>)>,
     game_data: Res<GameData>,
 ) {

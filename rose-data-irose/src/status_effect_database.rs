@@ -25,8 +25,7 @@ impl StbStatus {
         self.get_apply_status_effect_id(id)
             .iter()
             .zip(self.get_apply_status_effect_value(id).iter())
-            .filter(|(a, b)| a.is_some() && b.is_some())
-            .map(|(a, b)| (a.unwrap(), b.unwrap()))
+            .filter_map(|(a, b)| a.zip(*b))
             .collect()
     }
 
@@ -60,16 +59,16 @@ fn load_status_effect(
         id,
         name: status_effect_strings
             .as_ref()
-            .map_or("", |x| unsafe { std::mem::transmute(x.name) }),
+            .map_or(String::new(), |x| x.name.to_string()),
         description: status_effect_strings
             .as_ref()
-            .map_or("", |x| unsafe { std::mem::transmute(x.description) }),
+            .map_or(String::new(), |x| x.description.to_string()),
         start_message: status_effect_strings
             .as_ref()
-            .map_or("", |x| unsafe { std::mem::transmute(x.start_message) }),
+            .map_or(String::new(), |x| x.start_message.to_string()),
         end_message: status_effect_strings
             .as_ref()
-            .map_or("", |x| unsafe { std::mem::transmute(x.end_message) }),
+            .map_or(String::new(), |x| x.end_message.to_string()),
         status_effect_type,
         can_be_reapplied: data.get_can_be_reapplied(row).unwrap_or(false),
         cleared_by_type: data
@@ -100,6 +99,6 @@ pub fn get_status_effect_database(
     Ok(StatusEffectDatabase::new(
         string_database,
         status_effects,
-        StatusEffectId::new(43).unwrap(),
+        StatusEffectId::new(43).expect("hardcoded status effect ID 43 should be valid"),
     ))
 }

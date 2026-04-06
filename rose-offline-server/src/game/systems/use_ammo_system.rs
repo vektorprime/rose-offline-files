@@ -1,4 +1,4 @@
-use bevy::prelude::{EventReader, Query, ResMut};
+use bevy::prelude::{MessageReader, Query, ResMut};
 
 use rose_data::{Item, StackableSlotBehaviour};
 use rose_game_common::{
@@ -13,7 +13,7 @@ use crate::{
 
 pub fn use_ammo_system(
     mut query: Query<(&ClientEntity, &mut Equipment, Option<&GameClient>)>,
-    mut use_ammo_events: EventReader<UseAmmoEvent>,
+    mut use_ammo_events: MessageReader<UseAmmoEvent>,
     mut server_messages: ResMut<ServerMessages>,
 ) {
     for event in use_ammo_events.read() {

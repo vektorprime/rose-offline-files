@@ -284,7 +284,7 @@ impl RoseMcpServer {
                     "properties": {
                         "bot_id": { "type": "string", "description": "UUID of the bot" },
                         "player_name": { "type": "string", "description": "Name of the player to follow" },
-                        "distance": { "type": "number", "description": "Follow distance (optional, default 300)" }
+                        "distance": { "type": "number", "description": "Follow distance (optional, default 50)" }
                     },
                     "required": ["bot_id", "player_name"]
                 }),
@@ -634,7 +634,7 @@ impl RoseMcpServer {
         let bot_id = self.get_bot_id(&args).await?;
 
         let player_name = args["player_name"].as_str().ok_or("Missing 'player_name' parameter")?.to_string();
-        let distance = args["distance"].as_f64().unwrap_or(300.0) as f32;
+        let distance = args["distance"].as_f64().unwrap_or(50.0) as f32;
 
         let request = FollowRequest {
             player_name,

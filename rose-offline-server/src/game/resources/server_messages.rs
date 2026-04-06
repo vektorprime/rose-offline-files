@@ -1,3 +1,4 @@
+use bevy::math::UVec2;
 use bevy::prelude::Resource;
 use rose_data::ZoneId;
 
@@ -21,11 +22,18 @@ pub struct EntityMessage {
     pub message: ServerMessage,
 }
 
+pub struct SectorMessage {
+    pub zone_id: ZoneId,
+    pub sector: UVec2,
+    pub message: ServerMessage,
+}
+
 #[derive(Default, Resource)]
 pub struct ServerMessages {
     pub pending_global_messages: Vec<GlobalMessage>,
     pub pending_zone_messages: Vec<ZoneMessage>,
     pub pending_entity_messages: Vec<EntityMessage>,
+    pub pending_sector_messages: Vec<SectorMessage>,
 }
 
 #[allow(dead_code)]
@@ -47,6 +55,15 @@ impl ServerMessages {
         self.pending_entity_messages.push(EntityMessage {
             zone_id: entity.zone_id,
             entity_id: entity.id,
+            message,
+        });
+    }
+
+    /// Send a message to all entities in a specific sector and its adjacent sectors (3x3 area)
+    pub fn send_sector_message(&mut self, zone_id: ZoneId, sector: UVec2, message: ServerMessage) {
+        self.pending_sector_messages.push(SectorMessage {
+            zone_id,
+            sector,
             message,
         });
     }

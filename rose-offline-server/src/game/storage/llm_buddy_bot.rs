@@ -87,7 +87,7 @@ impl Default for VitalPoints {
 }
 
 fn default_follow_distance() -> f32 {
-    300.0
+    50.0  // Reduced from 300.0 to 50.0 for closer following
 }
 
 fn default_stamina() -> u32 {
@@ -118,7 +118,7 @@ impl LlmBuddyBotStorage {
             assigned_player_entity_id: 0,
             zone_id,
             position,
-            follow_distance: 300.0,
+            follow_distance: default_follow_distance(),
             is_following: false,
             health: VitalPoints::default(),
             mana: VitalPoints::default(),
@@ -271,6 +271,24 @@ impl LlmBuddyBotStorage {
         for name in Self::list_all_bot_names()? {
             match Self::try_load(&name) {
                 Ok(bot) => bots.push(bot),
+                Err(e) => log::error!("Failed to load bot '{}': {:?}", name, e),
+            }
+        }
+
+        Ok(bots)
+    }
+
+    /// Load all stored bots assigned to a specific player
+    pub fn load_for_player(player_name: &str) -> Result<Vec<Self>, anyhow::Error> {
+        let mut bots = Vec::new();
+        
+        for name in Self::list_all_bot_names()? {
+            match Self::try_load(&name) {
+                Ok(bot) => {
+                    if bot.assigned_player == player_name {
+                        bots.push(bot);
+                    }
+                }
                 Err(e) => log::error!("Failed to load bot '{}': {:?}", name, e),
             }
         }

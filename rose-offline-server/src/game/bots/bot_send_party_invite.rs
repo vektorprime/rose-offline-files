@@ -1,4 +1,4 @@
-use bevy::{ecs::query::QueryData, math::Vec3Swizzles, prelude::{Component, Entity, EventWriter, Query, Res, With}};
+use bevy::{ecs::query::QueryData, math::Vec3Swizzles, prelude::{Component, Entity, MessageWriter, Query, Res, With}};
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
 
 use crate::game::{
@@ -86,7 +86,7 @@ pub fn action_party_invite_nearby_bot(
     mut query: Query<(&Actor, &mut ActionState), With<PartyInviteNearbyBot>>,
     query_bot: Query<BotQuery, BotQueryFilterAlive>,
     client_entity_list: Res<ClientEntityList>,
-    mut party_events: EventWriter<PartyEvent>,
+    mut party_events: MessageWriter<PartyEvent>,
 ) {
     for (&Actor(bot_entity), mut state) in query.iter_mut() {
         let Ok(bot) = query_bot.get(bot_entity) else {
@@ -116,7 +116,7 @@ pub fn action_party_invite_nearby_bot(
                     if nearby_bot.party_membership.party.is_none()
                         && nearby_bot.bot_build.job_id != bot.bot_build.job_id
                     {
-                        party_events.send(PartyEvent::Invite {
+                        party_events.write(PartyEvent::Invite {
                             owner_entity: bot.entity,
                             invited_entity: nearby_bot.entity,
                         });

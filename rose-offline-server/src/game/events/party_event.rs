@@ -1,9 +1,9 @@
-use bevy::{ecs::prelude::Entity, prelude::Event};
+use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
 use rose_game_common::messages::{PartyItemSharing, PartyRejectInviteReason, PartyXpSharing};
 
 use crate::game::components::CharacterUniqueId;
 
-#[derive(Event, Clone)]
+#[derive(Message, Clone)]
 pub enum PartyMemberEvent {
     Reconnect {
         party_entity: Entity,
@@ -19,7 +19,7 @@ pub enum PartyMemberEvent {
     },
 }
 
-#[derive(Event, Clone)]
+#[derive(Message, Clone)]
 pub enum PartyEvent {
     Invite {
         owner_entity: Entity,

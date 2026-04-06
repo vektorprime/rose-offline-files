@@ -159,7 +159,7 @@ pub struct FollowRequest {
 }
 
 fn default_follow_distance() -> f32 {
-    300.0
+    50.0  // Reduced from 300.0 to 50.0 for closer following
 }
 
 /// Request to attack a target

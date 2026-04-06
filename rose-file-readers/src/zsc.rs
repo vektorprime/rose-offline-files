@@ -218,7 +218,7 @@ impl RoseFile for ZscFile {
                         5 => bone_index = Some(reader.read_u16()?),
                         6 => dummy_index = Some(reader.read_u16()?),
                         7 => parent = NonZeroU16::new(reader.read_u16()?).map(|id| id.get() - 1),
-                        8..=28 => todo!(),
+                        8..=28 => reader.skip(size as u64),
                         29 => {
                             let bits = reader.read_u16()?;
                             collision_shape = match bits & 0b111 {

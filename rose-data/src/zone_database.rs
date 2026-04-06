@@ -38,8 +38,8 @@ pub struct ZoneEventObject {
 
 pub struct ZoneData {
     pub id: ZoneId,
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: String,
+    pub description: String,
     pub sector_size: u32,
     pub grid_per_patch: f32,
     pub grid_size: f32,
@@ -58,6 +58,8 @@ pub struct ZoneData {
     pub evening_time: u32,
     pub night_time: u32,
     pub skybox_id: Option<SkyboxId>,
+    /// The planet index this zone belongs to (1 = Junon, 2 = Luna, 3 = Eldeon, etc.)
+    pub planet: usize,
 }
 
 impl ZoneData {

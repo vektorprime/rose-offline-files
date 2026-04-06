@@ -1,4 +1,4 @@
-use bevy::ecs::prelude::{Entity, EventReader, Mut, Query, Res};
+use bevy::ecs::prelude::{Entity, MessageReader, Mut, Query, Res};
 use bevy::math::Vec3Swizzles;
 use log::warn;
 use std::collections::HashSet;
@@ -163,7 +163,7 @@ pub fn npc_store_system(
         &UnionMembership,
         Option<&GameClient>,
     )>,
-    mut npc_store_events: EventReader<NpcStoreEvent>,
+    mut npc_store_events: MessageReader<NpcStoreEvent>,
     game_data: Res<GameData>,
     world_rates: Res<WorldRates>,
 ) {

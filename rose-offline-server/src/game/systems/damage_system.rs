@@ -1,10 +1,9 @@
 use std::time::Duration;
 
 use bevy::{
-    ecs::prelude::{Commands, EventReader, Query, ResMut},
-    prelude::EventWriter,
+    prelude::{Commands, Entity, MessageReader, MessageWriter, Query, ResMut},
     time::Time,
-    ecs::system::Res
+    ecs::system::Res,
 };
 use rose_game_common::data::Damage;
 
@@ -14,11 +13,13 @@ use crate::game::{
         ClientEntityType,
         ClientEntityId,
         Command,
+        CommandData,
         DamageSource,
         DamageSources,
         Dead,
         HealthPoints,
         MotionData,
+        NextCommand,
         NpcAi,
     },
     events::{DamageEvent, ItemLifeEvent},
@@ -30,14 +31,17 @@ pub fn damage_system(
     mut commands: Commands,
     attacker_query: Query<&ClientEntity>,
     mut defender_query: Query<(
+        Entity,
         &ClientEntity,
         &mut HealthPoints,
         Option<&mut DamageSources>,
         Option<&mut NpcAi>,
         Option<&MotionData>,
+        &mut Command,
+        Option<&mut NextCommand>,
     )>,
-    mut damage_events: EventReader<DamageEvent>,
-    mut item_life_events: EventWriter<ItemLifeEvent>,
+    mut damage_events: MessageReader<DamageEvent>,
+    mut item_life_events: MessageWriter<ItemLifeEvent>,
     mut server_messages: ResMut<ServerMessages>,
     time: Res<Time>,
 ) {
@@ -98,11 +102,59 @@ pub fn damage_system(
             );
         }
 
-        if let Ok((client, mut hp, damage_sources_opt, npc_ai_opt, motion_data_opt)) =
+        if let Ok((
+            defender_entity_id,
+            client,
+            mut hp,
+            damage_sources_opt,
+            npc_ai_opt,
+            motion_data_opt,
+            mut command,
+            next_command_opt,
+        )) =
             defender_query.get_mut(defender_entity)
         {
+            // Apply hit stun: briefly interrupt the target's current action
             if damage.apply_hit_stun {
-                // TODO: Apply hit stun by setting next command to HitStun ?
+                let hit_stun_duration = motion_data_opt
+                    .and_then(|motion_data| match motion_data {
+                        MotionData::Character(character) => character.hit.as_ref(),
+                        MotionData::Npc(npc) => npc.hit.as_ref(),
+                    })
+                    .map(|hit_motion| hit_motion.duration)
+                    .unwrap_or_else(|| Duration::from_millis(250));
+
+                let previous_command = command.command.clone();
+
+                // Preserve auto-attack intent when interrupted, so attack can resume server-side
+                if let Some(mut next_command) = next_command_opt {
+                    if next_command.command.is_none() {
+                        if let CommandData::Attack { target } = &previous_command {
+                            next_command.command = Some(CommandData::Attack { target: *target });
+                            next_command.has_sent_server_message = false;
+
+                            log::info!(
+                                "[COMBAT_DEBUG] Preserving interrupted attack intent: defender={:?}, target={:?}",
+                                defender_entity,
+                                target
+                            );
+                        }
+                    }
+                }
+
+                // Interrupt current command for hit-stun duration without permanently clearing combat intent
+                *command = Command::new(
+                    CommandData::Stop { send_message: false },
+                    Some(hit_stun_duration),
+                );
+
+                log::info!(
+                    "[COMBAT_DEBUG] Applied hit stun interrupt: defender={:?}, duration={:?}, previous_command={:?}",
+                    defender_entity,
+                    hit_stun_duration,
+                    previous_command
+                );
+
             }
 
             if hp.hp == 0 {

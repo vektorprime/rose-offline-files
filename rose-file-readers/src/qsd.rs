@@ -594,10 +594,14 @@ impl QsdFile {
                     );
 
                     if let Some(previous_trigger_name) = previous_trigger_name {
-                        triggers
-                            .get_mut(&previous_trigger_name)
-                            .unwrap()
-                            .next_trigger_name = Some(trigger_name.to_string());
+                        if let Some(trigger) = triggers.get_mut(&previous_trigger_name) {
+                            trigger.next_trigger_name = Some(trigger_name.to_string());
+                        } else {
+                            log::warn!(
+                                "QSD parser: trigger '{}' not found when setting next_trigger_name",
+                                previous_trigger_name
+                            );
+                        }
                     }
 
                     if check_next {
@@ -858,7 +862,7 @@ pub mod editor_friendly {
                                 writer.write_u8(match object {
                                     QsdObjectType::SelectedNpc => 0,
                                     QsdObjectType::SelectedEvent => 1,
-                                    QsdObjectType::QuestOwner => unimplemented!(),
+                                    QsdObjectType::QuestOwner => 2,
                                 });
                                 writer.write_padding(1);
                                 writer.write_u16(variable_id as u16);
@@ -988,7 +992,7 @@ pub mod editor_friendly {
                                 writer.write_u8(match object {
                                     QsdObjectType::SelectedNpc => 0,
                                     QsdObjectType::SelectedEvent => 1,
-                                    QsdObjectType::QuestOwner => unimplemented!(),
+                                    QsdObjectType::QuestOwner => 2,
                                 });
                                 writer.write_padding(3);
                                 writer.write_i32(distance);
@@ -1297,7 +1301,7 @@ pub mod editor_friendly {
                                 writer.write_u8(match object {
                                     QsdObjectType::SelectedNpc => 0,
                                     QsdObjectType::SelectedEvent => 1,
-                                    QsdObjectType::QuestOwner => unimplemented!(),
+                                    QsdObjectType::QuestOwner => 2,
                                 });
                                 writer.write_padding(1);
                                 writer.write_u16(variable_id as u16);
@@ -1334,7 +1338,7 @@ pub mod editor_friendly {
                                 writer.write_u8(match object {
                                     QsdObjectType::SelectedNpc => 0,
                                     QsdObjectType::SelectedEvent => 1,
-                                    QsdObjectType::QuestOwner => unimplemented!(),
+                                    QsdObjectType::QuestOwner => 2,
                                 }); // Object: Selected Event
                                 writer.write_padding(3);
                                 writer.write_u32(delay.as_secs() as u32);

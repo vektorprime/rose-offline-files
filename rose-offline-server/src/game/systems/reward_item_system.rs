@@ -7,7 +7,7 @@ use crate::game::{
 };
 use bevy::{
     ecs::{
-        prelude::{Commands, EventReader, Query, ResMut},
+        prelude::{Commands, MessageReader, Query, ResMut},
         system::Res,
     },
     time::Time,
@@ -16,7 +16,7 @@ use bevy::{
 pub fn reward_item_system(
     mut commands: Commands,
     mut query: Query<(&Position, &mut Inventory, Option<&GameClient>)>,
-    mut reward_item_events: EventReader<RewardItemEvent>,
+    mut reward_item_events: MessageReader<RewardItemEvent>,
     mut client_entity_list: ResMut<ClientEntityList>,
     time: Res<Time>,
 ) {

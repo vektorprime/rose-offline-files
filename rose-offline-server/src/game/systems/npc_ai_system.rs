@@ -1,8 +1,8 @@
 use arrayvec::ArrayVec;
 use bevy::math::{Vec3, Vec3Swizzles};
 use bevy::{
+    prelude::{Commands, Entity, MessageWriter, Query, Res, ResMut},
     ecs::{
-        prelude::{Commands, Entity, EventWriter, Query, Res, ResMut},
         query::QueryData,
         system::SystemParam,
     },
@@ -32,13 +32,16 @@ use crate::game::{
     bundles::{client_entity_leave_zone, ItemDropBundle, MonsterBundle},
     components::{
         AbilityValues, Clan, ClanMembership, ClientEntity, ClientEntitySector, ClientEntityType,
-        Command, CommandData, DamageSources, DroppedItem, GameClient, HealthPoints, Level,
-        MonsterSpawnPoint, MoveMode, NextCommand, Npc, NpcAi, ObjectVariables, Owner, Party,
+        Command, CommandData, DamageSources, DelayedSpawn, DroppedItem, GameClient, HealthPoints,
+        Level, MonsterSpawnPoint, MoveMode, NextCommand, Npc, NpcAi, ObjectVariables, Owner, Party,
         PartyMember, PartyMembership, Position, SpawnOrigin, StatusEffects, Team,
     },
     events::{ChatMessageEvent, DamageEvent, QuestTriggerEvent, RewardItemEvent, RewardXpEvent},
     messages::server::ServerMessage,
-    resources::{ClientEntityList, ServerMessages, WorldRates, WorldTime, ZoneList},
+    resources::{
+        ClientEntityList, EconomyVariables, ServerMessages, WorldRates, WorldTime, WorldVariables,
+        ZoneList,
+    },
     GameData,
 };
 
@@ -109,11 +112,13 @@ pub struct AiSystemParameters<'w, 's> {
     object_variable_query: Query<'w, 's, &'static mut ObjectVariables>,
     owner_query: Query<'w, 's, (&'static Position, &'static Command)>,
     clan_query: Query<'w, 's, &'static Clan>,
-    damage_events: EventWriter<'w, DamageEvent>,
-    quest_trigger_events: EventWriter<'w, QuestTriggerEvent>,
-    reward_item_events: EventWriter<'w, RewardItemEvent>,
-    chat_message_events: EventWriter<'w, ChatMessageEvent>,
+    damage_events: MessageWriter<'w, DamageEvent>,
+    quest_trigger_events: MessageWriter<'w, QuestTriggerEvent>,
+    reward_item_events: MessageWriter<'w, RewardItemEvent>,
+    chat_message_events: MessageWriter<'w, ChatMessageEvent>,
     zone_list: ResMut<'w, ZoneList>,
+    world_variables: ResMut<'w, WorldVariables>,
+    economy_variables: ResMut<'w, EconomyVariables>,
 }
 
 #[derive(SystemParam)]
@@ -125,9 +130,9 @@ pub struct AiSystemResources<'w, 's> {
 }
 
 #[allow(dead_code)]
-struct AiParameters<'a, '__w, 'w, '__wa, 'wa> {
-    source: &'a NpcQueryItem<'__w, 'w>,
-    attacker: Option<&'a AttackerQueryItem<'__wa, 'wa>>,
+struct AiParameters<'a, 'sw, 'ss, 'si, 'aw, 'atk_s, 'atk_i> {
+    source: &'a NpcQueryItem<'sw, 'ss, 'si>,
+    attacker: Option<&'a AttackerQueryItem<'aw, 'atk_s, 'atk_i>>,
     find_char: Option<(Entity, Vec3)>,
     near_char: Option<(Entity, Vec3)>,
     damage_received: Option<Damage>,
@@ -479,20 +484,8 @@ fn ai_condition_variable(
             .ok()
             .and_then(|object_variables| object_variables.variables.get(variable_id).copied())
             .unwrap_or(0),
-        AipVariableType::World => {
-            log::warn!(target: "npc_ai_unimplemented",
-                "Unimplemented ai_condition_variable with variable type {:?}",
-                variable_type
-            );
-            0
-        }
-        AipVariableType::Economy => {
-            log::warn!(target: "npc_ai_unimplemented",
-                "Unimplemented ai_condition_variable with variable type {:?}",
-                variable_type
-            );
-            0
-        }
+        AipVariableType::World => ai_system_parameters.world_variables.get(variable_id),
+        AipVariableType::Economy => ai_system_parameters.economy_variables.get(variable_id),
     };
 
     compare_aip_value(operator_type, variable_value, value)
@@ -875,6 +868,7 @@ fn ai_action_move_away_from_target(
             let direction_away_from_target =
                 (source_position.xy() - target.position.position.xy()).normalize();
             let move_vector = distance as f32 * direction_away_from_target;
+            // Preserve Z coordinate from source position
             let destination = source_position + Vec3::new(move_vector.x, move_vector.y, 0.0);
 
             ai_system_parameters
@@ -914,6 +908,7 @@ fn ai_action_move_random_distance(
             AipMoveMode::Run => MoveMode::Run,
             AipMoveMode::Walk => MoveMode::Walk,
         };
+        // Preserve Z coordinate from move_origin
         let destination = move_origin + Vec3::new(dx as f32, dy as f32, 0.0);
         ai_system_parameters
             .commands
@@ -937,12 +932,14 @@ fn ai_action_move_near_owner(
         let distance = 0.8 * delta.length();
         let direction = delta.normalize();
         let destination = ai_parameters.source.position.position.xy() + direction * distance;
+        // Preserve Z coordinate from source position
+        let source_z = ai_parameters.source.position.position.z;
 
         ai_system_parameters
             .commands
             .entity(ai_parameters.source.entity)
             .insert(NextCommand::with_move(
-                Vec3::new(destination.x, destination.y, 0.0),
+                Vec3::new(destination.x, destination.y, source_z),
                 None,
                 Some(MoveMode::Run),
             ));
@@ -1051,7 +1048,7 @@ fn ai_action_quest_trigger(
         if let Some(entity) = ai_parameters.selected_local_npc {
             ai_system_parameters
                 .quest_trigger_events
-                .send(QuestTriggerEvent {
+                .write(QuestTriggerEvent {
                     trigger_entity: entity,
                     trigger_hash,
                 });
@@ -1059,7 +1056,7 @@ fn ai_action_quest_trigger(
     } else {
         ai_system_parameters
             .quest_trigger_events
-            .send(QuestTriggerEvent {
+            .write(QuestTriggerEvent {
                 trigger_entity: ai_parameters.source.entity,
                 trigger_hash,
             });
@@ -1072,7 +1069,7 @@ fn ai_action_kill_self(
 ) {
     ai_system_parameters
         .damage_events
-        .send(DamageEvent::Attack {
+        .write(DamageEvent::Attack {
             attacker: ai_parameters.source.entity,
             defender: ai_parameters.source.entity,
             damage: Damage {
@@ -1147,6 +1144,9 @@ fn ai_action_nearby_allies_attack_target(
     }
 }
 
+/// Delay in seconds before spawning when the source NPC is dead
+const DEAD_SPAWN_DELAY_SECS: u64 = 3;
+
 fn ai_action_spawn_npc(
     ai_system_parameters: &mut AiSystemParameters,
     ai_system_resources: &AiSystemResources,
@@ -1181,12 +1181,31 @@ fn ai_action_spawn_npc(
     }
 
     if let Some(spawn_position) = spawn_position {
-        // TODO: If ai_parameters.is_dead { spawn after 3 seconds }
-        if let Some(spawn_entity) = MonsterBundle::spawn(
+        let npc_id = npc_id.unwrap();
+
+        // If the source NPC is dead, create a delayed spawn instead of spawning immediately
+        if ai_parameters.is_dead {
+            let delayed_spawn = DelayedSpawn::new(
+                npc_id,
+                ai_parameters.source.position.zone_id,
+                spawn_position,
+                distance,
+                ai_parameters.source.team.clone(),
+                if is_owner {
+                    Some(ai_parameters.source.entity)
+                } else {
+                    None
+                },
+                DEAD_SPAWN_DELAY_SECS,
+            );
+
+            // Spawn a placeholder entity that will track the delayed spawn
+            ai_system_parameters.commands.spawn(delayed_spawn);
+        } else if let Some(spawn_entity) = MonsterBundle::spawn(
             &mut ai_system_parameters.commands,
             &mut ai_system_parameters.client_entity_list,
             &ai_system_resources.game_data,
-            npc_id.unwrap(),
+            npc_id,
             ai_parameters.source.position.zone_id,
             SpawnOrigin::Summoned(ai_parameters.source.entity, spawn_position),
             distance,
@@ -1306,52 +1325,56 @@ fn ai_action_set_variable(
     value: i32,
 ) {
     match variable_type {
-        AipVariableType::LocalNpcObject => ai_parameters
-            .selected_local_npc
-            .and_then(|object_entity| {
-                ai_system_parameters
-                    .object_variable_query
-                    .get_mut(object_entity)
-                    .ok()
-            })
-            .map(|mut object_variables| {
-                object_variables
-                    .variables
-                    .get_mut(variable_id)
-                    .map(|variable| match operator {
-                        AipResultOperator::Set => *variable = value,
-                        AipResultOperator::Add => *variable = i32::min(*variable + value, 500),
-                        AipResultOperator::Subtract => *variable = i32::max(*variable - value, 0),
-                    })
-            }),
-        AipVariableType::Ai => ai_system_parameters
-            .object_variable_query
-            .get_mut(ai_parameters.source.entity)
-            .ok()
-            .map(|mut object_variables| {
-                object_variables
-                    .variables
-                    .get_mut(variable_id)
-                    .map(|variable| match operator {
-                        AipResultOperator::Set => *variable = value,
-                        AipResultOperator::Add => *variable += value,
-                        AipResultOperator::Subtract => *variable -= value,
-                    })
-            }),
-        AipVariableType::World => {
-            log::warn!(target: "npc_ai_unimplemented",
-                "Unimplemented ai_action_set_variable with variable type {:?}",
-                variable_type
-            );
-            None
+        AipVariableType::LocalNpcObject => {
+            ai_parameters
+                .selected_local_npc
+                .and_then(|object_entity| {
+                    ai_system_parameters
+                        .object_variable_query
+                        .get_mut(object_entity)
+                        .ok()
+                })
+                .map(|mut object_variables| {
+                    object_variables
+                        .variables
+                        .get_mut(variable_id)
+                        .map(|variable| match operator {
+                            AipResultOperator::Set => *variable = value,
+                            AipResultOperator::Add => *variable = i32::min(*variable + value, 500),
+                            AipResultOperator::Subtract => *variable = i32::max(*variable - value, 0),
+                        })
+                });
         }
-        AipVariableType::Economy => {
-            log::warn!(target: "npc_ai_unimplemented",
-                "Unimplemented ai_action_set_variable with variable type {:?}",
-                variable_type
-            );
-            None
+        AipVariableType::Ai => {
+            ai_system_parameters
+                .object_variable_query
+                .get_mut(ai_parameters.source.entity)
+                .ok()
+                .map(|mut object_variables| {
+                    object_variables
+                        .variables
+                        .get_mut(variable_id)
+                        .map(|variable| match operator {
+                            AipResultOperator::Set => *variable = value,
+                            AipResultOperator::Add => *variable += value,
+                            AipResultOperator::Subtract => *variable -= value,
+                        })
+                });
         }
+        AipVariableType::World => match operator {
+            AipResultOperator::Set => ai_system_parameters.world_variables.set(variable_id, value),
+            AipResultOperator::Add => ai_system_parameters.world_variables.add(variable_id, value),
+            AipResultOperator::Subtract => {
+                ai_system_parameters.world_variables.subtract(variable_id, value)
+            }
+        },
+        AipVariableType::Economy => match operator {
+            AipResultOperator::Set => ai_system_parameters.economy_variables.set(variable_id, value),
+            AipResultOperator::Add => ai_system_parameters.economy_variables.add(variable_id, value),
+            AipResultOperator::Subtract => {
+                ai_system_parameters.economy_variables.subtract(variable_id, value)
+            }
+        },
     };
 }
 fn ai_action_message(
@@ -1378,7 +1401,7 @@ fn ai_action_message(
                     },
                 );
 
-                ai_system_parameters.chat_message_events.send(ChatMessageEvent {
+                ai_system_parameters.chat_message_events.write(ChatMessageEvent {
                     sender_entity: ai_parameters.source.entity,
                     sender_name: opt_npc_name
                         .clone()
@@ -1398,7 +1421,7 @@ fn ai_action_message(
                         },
                     );
 
-                    ai_system_parameters.chat_message_events.send(ChatMessageEvent {
+                    ai_system_parameters.chat_message_events.write(ChatMessageEvent {
                         sender_entity: ai_parameters.source.entity,
                         sender_name: name.clone(),
                         zone_id: ai_parameters.source.client_entity.zone_id,
@@ -1417,7 +1440,7 @@ fn ai_action_message(
                         },
                     );
 
-                    ai_system_parameters.chat_message_events.send(ChatMessageEvent {
+                    ai_system_parameters.chat_message_events.write(ChatMessageEvent {
                         sender_entity: ai_parameters.source.entity,
                         sender_name: name.clone(),
                         zone_id: ai_parameters.source.client_entity.zone_id,
@@ -1485,7 +1508,7 @@ fn ai_action_give_item_to_owner(
     {
         ai_system_parameters
             .reward_item_events
-            .send(RewardItemEvent::new(
+            .write(RewardItemEvent::new(
                 ai_parameters.source.entity,
                 item,
                 true,
@@ -1671,8 +1694,9 @@ pub fn npc_ai_system(
     attacker_query: Query<AttackerQuery>,
     killer_query: Query<KillerQuery>,
     query_party: Query<&Party>,
+    party_member_game_client_query: Query<&GameClient>,
     world_rates: Res<WorldRates>,
-    mut reward_xp_events: EventWriter<RewardXpEvent>,
+    mut reward_xp_events: MessageWriter<RewardXpEvent>,
 ) {
     for mut source in npc_query.iter_mut() {
         if !source.ai.has_run_created_trigger {
@@ -1849,7 +1873,7 @@ pub fn npc_ai_system(
         }
     } else {
         // Reward XP to attacker
-        reward_xp_events.send(RewardXpEvent::new(
+        reward_xp_events.write(RewardXpEvent::new(
             reward_xp_entity,
             reward_xp as u64,
             true,
@@ -1893,7 +1917,7 @@ pub fn npc_ai_system(
 
                                 if party_members_in_range.is_empty() {
                                     // Reward XP to first party member which attacked this npc
-                                    reward_xp_events.send(RewardXpEvent::new(
+                                    reward_xp_events.write(RewardXpEvent::new(
                                         first_party_member,
                                         total_xp as u64,
                                         true,
@@ -1901,7 +1925,7 @@ pub fn npc_ai_system(
                                     ));
                                 } else if party_members_in_range.len() == 1 {
                                     // Reward XP to only party member in range
-                                    reward_xp_events.send(RewardXpEvent::new(
+                                    reward_xp_events.write(RewardXpEvent::new(
                                         party_members_in_range[0].0,
                                         total_xp as u64,
                                         true,
@@ -1914,7 +1938,7 @@ pub fn npc_ai_system(
                                         / 20;
 
                                     for (party_member, _) in party_members_in_range.iter() {
-                                        reward_xp_events.send(RewardXpEvent::new(
+                                        reward_xp_events.write(RewardXpEvent::new(
                                             *party_member,
                                             reward_xp as u64,
                                             true,
@@ -1933,7 +1957,7 @@ pub fn npc_ai_system(
                                             / (party_members_in_range.len() as i64 * 4 + 1)
                                             / 700;
 
-                                        reward_xp_events.send(RewardXpEvent::new(
+                                        reward_xp_events.write(RewardXpEvent::new(
                                             *party_member,
                                             reward_xp as u64,
                                             true,
@@ -1956,14 +1980,32 @@ pub fn npc_ai_system(
 
                                     // Inform client to execute npc dead event
                                     if !npc_data.death_quest_trigger_name.is_empty() {
-                                        if let Some(killer_game_client) = killer.game_client {
-                                            // TODO: Send NPC death trigger to whole party
-                                            /*
-                                            if npc_data.npc_quest_type != 0 {
+                                        // Send NPC death trigger to whole party if applicable
+                                        if let Some(party_entity) = killer
+                                            .party_membership
+                                            .and_then(|party_membership| party_membership.party)
+                                        {
+                                            // Send to all party members
+                                            if let Ok(party) = query_party.get(party_entity) {
+                                                for party_member in party
+                                                    .members
+                                                    .iter()
+                                                    .filter_map(PartyMember::get_entity)
+                                                {
+                                                    if let Ok(game_client) =
+                                                        party_member_game_client_query.get(party_member)
+                                                    {
+                                                        game_client
+                                                            .server_message_tx
+                                                            .send(ServerMessage::RunNpcDeathTrigger {
+                                                                npc_id: source.npc.id,
+                                                            })
+                                                            .ok();
+                                                    }
+                                                }
                                             }
-                                            */
-
-                                            // Send to only client
+                                        } else if let Some(killer_game_client) = killer.game_client {
+                                            // No party - send to only the killer client
                                             killer_game_client
                                                 .server_message_tx
                                                 .send(ServerMessage::RunNpcDeathTrigger {
@@ -2028,6 +2070,51 @@ pub fn npc_ai_system(
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// System to process delayed spawns and spawn monsters when their delay timer has elapsed.
+/// This should be added to the game schedule to run every frame.
+pub fn delayed_spawn_system(
+    mut commands: Commands,
+    mut client_entity_list: ResMut<ClientEntityList>,
+    game_data: Res<GameData>,
+    mut delayed_spawn_query: Query<(Entity, &DelayedSpawn)>,
+) {
+    // Collect entities to process and remove to avoid borrow issues
+    let mut spawns_to_process: Vec<(Entity, DelayedSpawn)> = Vec::new();
+
+    for (entity, delayed_spawn) in delayed_spawn_query.iter() {
+        if delayed_spawn.is_ready() {
+            spawns_to_process.push((entity, delayed_spawn.clone()));
+        }
+    }
+
+    // Process the spawns
+    for (entity, delayed_spawn) in spawns_to_process {
+        // Despawn the delayed spawn tracker entity
+        commands.entity(entity).despawn();
+
+        // Spawn the actual monster
+        if let Some(spawn_entity) = MonsterBundle::spawn(
+            &mut commands,
+            &mut client_entity_list,
+            &game_data,
+            delayed_spawn.npc_id,
+            delayed_spawn.zone_id,
+            SpawnOrigin::Summoned(
+                delayed_spawn.owner_entity.unwrap_or(Entity::PLACEHOLDER),
+                delayed_spawn.spawn_position,
+            ),
+            delayed_spawn.spawn_range,
+            delayed_spawn.team,
+            None,
+            None,
+        ) {
+            if let Some(owner_entity) = delayed_spawn.owner_entity {
+                commands.entity(spawn_entity).insert(Owner::new(owner_entity));
+            }
         }
     }
 }

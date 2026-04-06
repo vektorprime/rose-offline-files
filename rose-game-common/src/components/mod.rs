@@ -5,6 +5,7 @@ mod character_info;
 mod clan;
 mod equipment;
 mod experience_points;
+mod guild_membership;
 mod health_points;
 mod hotbar;
 mod inventory;
@@ -20,6 +21,7 @@ mod skill_points;
 mod stamina;
 mod stat_points;
 mod status_effects;
+mod summon_points;
 mod team;
 mod union_membership;
 
@@ -30,6 +32,7 @@ pub use character_info::{CharacterGender, CharacterInfo, CharacterUniqueId};
 pub use clan::{ClanLevel, ClanMark, ClanPoints, ClanUniqueId};
 pub use equipment::{Equipment, EquipmentItemDatabase, EquipmentItemReference};
 pub use experience_points::ExperiencePoints;
+pub use guild_membership::GuildMembership;
 pub use health_points::HealthPoints;
 pub use hotbar::{Hotbar, HotbarSlot, HOTBAR_NUM_PAGES, HOTBAR_PAGE_SIZE};
 pub use inventory::{
@@ -50,5 +53,6 @@ pub use stat_points::StatPoints;
 pub use status_effects::{
     ActiveStatusEffect, ActiveStatusEffectRegen, StatusEffects, StatusEffectsRegen,
 };
+pub use summon_points::SummonPoints;
 pub use team::Team;
 pub use union_membership::UnionMembership;

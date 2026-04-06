@@ -1,4 +1,4 @@
-use bevy::ecs::prelude::{Entity, EventReader, EventWriter, Query, Res, ResMut};
+use bevy::prelude::{Entity, MessageReader, MessageWriter, Query, Res, ResMut};
 
 use crate::game::{
     components::{
@@ -35,8 +35,8 @@ pub fn experience_points_system(
     source_entity_query: Query<&ClientEntity>,
     game_data: Res<GameData>,
     world_rates: Res<WorldRates>,
-    mut quest_trigger_events: EventWriter<QuestTriggerEvent>,
-    mut reward_xp_events: EventReader<RewardXpEvent>,
+    mut quest_trigger_events: MessageWriter<QuestTriggerEvent>,
+    mut reward_xp_events: MessageReader<RewardXpEvent>,
     mut server_messages: ResMut<ServerMessages>,
 ) {
     for reward_xp_event in reward_xp_events.read() {
@@ -95,7 +95,7 @@ pub fn experience_points_system(
             if level.level != level_before {
                 // Call every level up quest trigger
                 for trigger_level in (level_before + 1)..=level.level {
-                    quest_trigger_events.send(QuestTriggerEvent {
+                    quest_trigger_events.write(QuestTriggerEvent {
                         trigger_entity: entity,
                         trigger_hash: format!("levelup_{}", trigger_level).as_str().into(),
                     });

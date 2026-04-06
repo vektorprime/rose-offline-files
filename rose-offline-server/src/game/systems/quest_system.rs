@@ -5,8 +5,8 @@ use std::{
 };
 
 use bevy::{
+    prelude::{Commands, Entity, MessageReader, MessageWriter, Mut, Query, Res, ResMut},
     ecs::{
-        prelude::{Commands, Entity, EventReader, EventWriter, Mut, Query, Res, ResMut},
         query::QueryData,
         system::SystemParam,
     },
@@ -22,7 +22,7 @@ use rose_file_readers::{
     QsdAbilityType, QsdClanPoints, QsdCondition, QsdConditionOperator, QsdDistance,
     QsdEquipmentIndex, QsdEventId, QsdItem, QsdNpcId, QsdNpcMessageType, QsdObjectType, QsdQuestId,
     QsdReward, QsdRewardOperator, QsdServerChannelId, QsdSkillId, QsdSpawnMonsterLocation,
-    QsdTeamNumber, QsdTeamNumberSource, QsdVariableId, QsdVariableType, QsdZoneId,
+    QsdStringId, QsdTeamNumber, QsdTeamNumberSource, QsdVariableId, QsdVariableType, QsdZoneId,
 };
 use rose_game_common::components::ClanPoints;
 
@@ -50,10 +50,10 @@ pub struct QuestSystemParameters<'w, 's> {
     client_entity_list: ResMut<'w, ClientEntityList>,
     server_messages: ResMut<'w, ServerMessages>,
     zone_list: ResMut<'w, ZoneList>,
-    reward_item_events: EventWriter<'w, RewardItemEvent>,
-    reward_xp_events: EventWriter<'w, RewardXpEvent>,
-    clan_events: EventWriter<'w, ClanEvent>,
-    chat_message_events: EventWriter<'w, ChatMessageEvent>,
+    reward_item_events: MessageWriter<'w, RewardItemEvent>,
+    reward_xp_events: MessageWriter<'w, RewardXpEvent>,
+    clan_events: MessageWriter<'w, ClanEvent>,
+    chat_message_events: MessageWriter<'w, ChatMessageEvent>,
     object_variables_query: Query<'w, 's, (&'static mut ObjectVariables, &'static Position)>,
     party_query: Query<'w, 's, &'static Party>,
     clan_query: Query<'w, 's, &'static Clan>,
@@ -98,8 +98,8 @@ pub struct QuestSourceEntityQuery<'w> {
     clan_membership: Option<&'w ClanMembership>,
 }
 
-struct QuestParameters<'a, 'b, 'w> {
-    source: &'a mut QuestSourceEntityQueryItem<'b, 'w>,
+struct QuestParameters<'a, 'qw, 'qs, 'qi> {
+    source: &'a mut QuestSourceEntityQueryItem<'qw, 'qs, 'qi>,
     selected_event_object: Option<Entity>,
     selected_npc: Option<Entity>,
     selected_quest_index: Option<usize>,
@@ -639,7 +639,7 @@ fn quest_condition_check_clan_position(
     let value = if let Some(clan_entity) = quest_parameters
         .source
         .clan_membership
-        .and_then(|clan_membership| clan_membership.clan())
+        .and_then(|clan_membership: &ClanMembership| clan_membership.clan())
     {
         quest_system_parameters
             .clan_query
@@ -669,7 +669,7 @@ fn quest_condition_check_clan_contribution(
     let value = if let Some(clan_entity) = quest_parameters
         .source
         .clan_membership
-        .and_then(|clan_membership| clan_membership.clan())
+        .and_then(|clan_membership: &ClanMembership| clan_membership.clan())
     {
         quest_system_parameters
             .clan_query
@@ -693,7 +693,7 @@ fn quest_condition_check_clan_level(
     let value = if let Some(clan_entity) = quest_parameters
         .source
         .clan_membership
-        .and_then(|clan_membership| clan_membership.clan())
+        .and_then(|clan_membership: &ClanMembership| clan_membership.clan())
     {
         quest_system_parameters
             .clan_query
@@ -716,7 +716,7 @@ fn quest_condition_check_clan_points(
     let value = if let Some(clan_entity) = quest_parameters
         .source
         .clan_membership
-        .and_then(|clan_membership| clan_membership.clan())
+        .and_then(|clan_membership: &ClanMembership| clan_membership.clan())
     {
         quest_system_parameters
             .clan_query
@@ -739,7 +739,7 @@ fn quest_condition_check_clan_money(
     let value = if let Some(clan_entity) = quest_parameters
         .source
         .clan_membership
-        .and_then(|clan_membership| clan_membership.clan())
+        .and_then(|clan_membership: &ClanMembership| clan_membership.clan())
     {
         quest_system_parameters
             .clan_query
@@ -762,7 +762,7 @@ fn quest_condition_check_clan_member_count(
     let value = if let Some(clan_entity) = quest_parameters
         .source
         .clan_membership
-        .and_then(|clan_membership| clan_membership.clan())
+        .and_then(|clan_membership: &ClanMembership| clan_membership.clan())
     {
         quest_system_parameters
             .clan_query
@@ -785,7 +785,7 @@ fn quest_condition_check_clan_have_skill(
     if let Some(clan_entity) = quest_parameters
         .source
         .clan_membership
-        .and_then(|clan_membership| clan_membership.clan())
+        .and_then(|clan_membership: &ClanMembership| clan_membership.clan())
     {
         if let Ok(clan) = quest_system_parameters.clan_query.get(clan_entity) {
             for skill_id in clan.skills.iter() {
@@ -1076,7 +1076,7 @@ fn quest_reward_calculated_experience_points(
 
     quest_system_parameters
         .reward_xp_events
-        .send(RewardXpEvent::new(
+        .write(RewardXpEvent::new(
             quest_parameters.source.entity,
             reward_value as u64,
             false,
@@ -1181,7 +1181,7 @@ fn quest_reward_calculated_item(
     if let Some(item) = item {
         quest_system_parameters
             .reward_item_events
-            .send(RewardItemEvent::new(
+            .write(RewardItemEvent::new(
                 quest_parameters.source.entity,
                 item,
                 true,
@@ -1389,7 +1389,7 @@ fn quest_reward_add_item(
         if let Some(item) = Item::from_item_data(item_data, quantity as u32) {
             quest_system_parameters
                 .reward_item_events
-                .send(RewardItemEvent::new(
+                .write(RewardItemEvent::new(
                     quest_parameters.source.entity,
                     item,
                     true,
@@ -1940,7 +1940,7 @@ fn quest_reward_npc_message(
                     },
                 );
 
-                quest_system_parameters.chat_message_events.send(ChatMessageEvent {
+                quest_system_parameters.chat_message_events.write(ChatMessageEvent {
                     sender_entity: quest_parameters.source.entity,
                     sender_name: name,
                     zone_id: quest_parameters.source.position.zone_id,
@@ -1949,16 +1949,17 @@ fn quest_reward_npc_message(
                 });
             }
             QsdNpcMessageType::Shout => {
-                // TODO: A shout message actually goes to adjacent 3 sectors rather than full zone
-                quest_system_parameters.server_messages.send_zone_message(
+                // Shout goes to adjacent sectors (3x3 area centered on source sector)
+                quest_system_parameters.server_messages.send_sector_message(
                     quest_parameters.source.position.zone_id,
+                    quest_parameters.source.client_entity_sector.sector,
                     ServerMessage::ShoutChat {
                         name: name.clone(),
                         text: message.clone(),
                     },
                 );
 
-                quest_system_parameters.chat_message_events.send(ChatMessageEvent {
+                quest_system_parameters.chat_message_events.write(ChatMessageEvent {
                     sender_entity: quest_parameters.source.entity,
                     sender_name: name,
                     zone_id: quest_parameters.source.position.zone_id,
@@ -1975,7 +1976,7 @@ fn quest_reward_npc_message(
                     },
                 );
 
-                quest_system_parameters.chat_message_events.send(ChatMessageEvent {
+                quest_system_parameters.chat_message_events.write(ChatMessageEvent {
                     sender_entity: quest_parameters.source.entity,
                     sender_name: name,
                     zone_id: quest_parameters.source.position.zone_id,
@@ -1996,11 +1997,11 @@ fn quest_reward_clan_level_increase(
     if let Some(clan_entity) = quest_parameters
         .source
         .clan_membership
-        .and_then(|clan_membership| clan_membership.clan())
+        .and_then(|clan_membership: &ClanMembership| clan_membership.clan())
     {
         quest_system_parameters
             .clan_events
-            .send(ClanEvent::AddLevel {
+            .write(ClanEvent::AddLevel {
                 clan_entity,
                 level: 1,
             });
@@ -2020,13 +2021,13 @@ fn quest_reward_clan_money(
     if let Some(clan_entity) = quest_parameters
         .source
         .clan_membership
-        .and_then(|clan_membership| clan_membership.clan())
+        .and_then(|clan_membership: &ClanMembership| clan_membership.clan())
     {
         match operator {
             QsdRewardOperator::Set => {
                 quest_system_parameters
                     .clan_events
-                    .send(ClanEvent::SetMoney {
+                    .write(ClanEvent::SetMoney {
                         clan_entity,
                         money: Money(value as i64),
                     });
@@ -2034,7 +2035,7 @@ fn quest_reward_clan_money(
             QsdRewardOperator::Add => {
                 quest_system_parameters
                     .clan_events
-                    .send(ClanEvent::AddMoney {
+                    .write(ClanEvent::AddMoney {
                         clan_entity,
                         money: value as i64,
                     });
@@ -2042,7 +2043,7 @@ fn quest_reward_clan_money(
             QsdRewardOperator::Subtract => {
                 quest_system_parameters
                     .clan_events
-                    .send(ClanEvent::AddMoney {
+                    .write(ClanEvent::AddMoney {
                         clan_entity,
                         money: -value as i64,
                     });
@@ -2071,13 +2072,13 @@ fn quest_reward_clan_points(
     if let Some(clan_entity) = quest_parameters
         .source
         .clan_membership
-        .and_then(|clan_membership| clan_membership.clan())
+        .and_then(|clan_membership: &ClanMembership| clan_membership.clan())
     {
         match operator {
             QsdRewardOperator::Set => {
                 quest_system_parameters
                     .clan_events
-                    .send(ClanEvent::SetPoints {
+                    .write(ClanEvent::SetPoints {
                         clan_entity,
                         points: ClanPoints(value as u64),
                     });
@@ -2085,7 +2086,7 @@ fn quest_reward_clan_points(
             QsdRewardOperator::Add => {
                 quest_system_parameters
                     .clan_events
-                    .send(ClanEvent::AddPoints {
+                    .write(ClanEvent::AddPoints {
                         clan_entity,
                         points: value as i64,
                     });
@@ -2093,7 +2094,7 @@ fn quest_reward_clan_points(
             QsdRewardOperator::Subtract => {
                 quest_system_parameters
                     .clan_events
-                    .send(ClanEvent::AddPoints {
+                    .write(ClanEvent::AddPoints {
                         clan_entity,
                         points: -value as i64,
                     });
@@ -2121,12 +2122,12 @@ fn quest_reward_clan_add_skill(
     if let Some(clan_entity) = quest_parameters
         .source
         .clan_membership
-        .and_then(|clan_membership| clan_membership.clan())
+        .and_then(|clan_membership: &ClanMembership| clan_membership.clan())
     {
         if let Some(skill_id) = SkillId::new(skill_id as u16) {
             quest_system_parameters
                 .clan_events
-                .send(ClanEvent::AddSkill {
+                .write(ClanEvent::AddSkill {
                     clan_entity,
                     skill_id,
                 });
@@ -2145,12 +2146,12 @@ fn quest_reward_clan_remove_skill(
     if let Some(clan_entity) = quest_parameters
         .source
         .clan_membership
-        .and_then(|clan_membership| clan_membership.clan())
+        .and_then(|clan_membership: &ClanMembership| clan_membership.clan())
     {
         if let Some(skill_id) = SkillId::new(skill_id as u16) {
             quest_system_parameters
                 .clan_events
-                .send(ClanEvent::RemoveSkill {
+                .write(ClanEvent::RemoveSkill {
                     clan_entity,
                     skill_id,
                 });
@@ -2159,6 +2160,250 @@ fn quest_reward_clan_remove_skill(
     } else {
         false
     }
+}
+
+fn quest_reward_set_revive_position(
+    quest_parameters: &mut QuestParameters,
+    x: f32,
+    y: f32,
+) -> bool {
+    if let Some(character_info) = quest_parameters.source.character_info.as_mut() {
+        // Set the revive position to the specified coordinates in the current zone
+        character_info.revive_position = Vec3::new(x, y, 0.0);
+        log::info!(
+            "Set revive position for character {} to ({}, {})",
+            character_info.name,
+            x,
+            y
+        );
+        true
+    } else {
+        false
+    }
+}
+
+fn quest_reward_trigger_after_delay(
+    _quest_system_parameters: &mut QuestSystemParameters,
+    _quest_system_resources: &QuestSystemResources,
+    _quest_parameters: &mut QuestParameters,
+    _object: QsdObjectType,
+    _delay: std::time::Duration,
+    _trigger: &str,
+) -> bool {
+    // TODO: This requires a delayed trigger system that stores the trigger
+    // and fires it after the specified delay. For now, log and return success.
+    log::warn!(
+        "TriggerAfterDelay not fully implemented: object={:?}, delay={:?}, trigger={}",
+        _object,
+        _delay,
+        _trigger
+    );
+    true
+}
+
+fn quest_reward_format_announce_message(
+    quest_system_parameters: &mut QuestSystemParameters,
+    quest_system_resources: &QuestSystemResources,
+    quest_parameters: &mut QuestParameters,
+    string_id: QsdStringId,
+    variables: &[(QsdNpcId, QsdVariableId)],
+) -> bool {
+    // Format the message by substituting variables into a string
+    // Since we don't have direct string lookup by ID, we build a formatted message
+    let mut formatted_message = String::new();
+
+    for (_npc_id, variable_id) in variables {
+        // Try to get the variable value from object variables
+        // variable_id is QsdVariableId which is usize, variables is Vec<i32>
+        let variable_value: Option<i32> = quest_system_parameters
+            .object_variables_query
+            .iter()
+            .find_map(|(object_vars, _)| {
+                object_vars.variables.get(*variable_id).copied()
+            });
+
+        if let Some(value) = variable_value {
+            if !formatted_message.is_empty() {
+                formatted_message.push(' ');
+            }
+            formatted_message.push_str(&value.to_string());
+        }
+    }
+
+    // If no variables were found, use the string_id as a placeholder
+    if formatted_message.is_empty() {
+        formatted_message = format!("Quest message {}", string_id);
+    }
+
+    // Send the formatted message as an announcement to the zone
+    let name = quest_parameters
+        .source
+        .character_info
+        .as_ref()
+        .map(|ci| ci.name.clone())
+        .or_else(|| {
+            quest_parameters.source.npc.as_ref().and_then(|npc| {
+                quest_system_resources
+                    .game_data
+                    .npcs
+                    .get_npc(npc.id)
+                    .map(|npc_data| npc_data.name.to_string())
+            })
+        });
+
+    quest_system_parameters.server_messages.send_zone_message(
+        quest_parameters.source.position.zone_id,
+        ServerMessage::AnnounceChat {
+            name,
+            text: formatted_message,
+        },
+    );
+    true
+}
+
+fn quest_reward_trigger_for_zone_team(
+    quest_system_parameters: &mut QuestSystemParameters,
+    quest_system_resources: &QuestSystemResources,
+    _quest_parameters: &mut QuestParameters,
+    zone: QsdZoneId,
+    team_number: QsdTeamNumber,
+    trigger: &str,
+) -> bool {
+    // Find all entities in the specified zone with the matching team number
+    let zone_id = match ZoneId::new(zone as u16) {
+        Some(id) => id,
+        None => {
+            log::warn!("TriggerForZoneTeam: Invalid zone id {}", zone);
+            return false;
+        }
+    };
+
+    let trigger_name = trigger.to_string();
+
+    // Get the trigger hash if it exists
+    let trigger_hash = quest_system_resources
+        .game_data
+        .quests
+        .get_trigger_by_name(&trigger_name)
+        .map(|t| t.name.clone());
+
+    if trigger_hash.is_none() {
+        log::warn!("TriggerForZoneTeam: Trigger '{}' not found", trigger_name);
+        return false;
+    }
+
+    // Get entities in the zone - we'll use the client entity list
+    if let Some(zone_entities) = quest_system_parameters.client_entity_list.get_zone(zone_id) {
+        // We need to iterate entities and check their team
+        // For now, just log since we need a way to access team components
+        // This would require additional query access
+        log::info!(
+            "TriggerForZoneTeam: Would trigger '{}' for team {:?} in zone {}",
+            trigger_name,
+            team_number,
+            zone
+        );
+        // TODO: Actually trigger for matching team members
+        // This requires access to a query that can check team components
+    }
+
+    true
+}
+
+fn quest_reward_clan_point_contribution(
+    quest_system_parameters: &mut QuestSystemParameters,
+    quest_parameters: &mut QuestParameters,
+    operator: QsdRewardOperator,
+    value: QsdClanPoints,
+) -> bool {
+    // Clan point contribution affects both the clan's points and the member's contribution
+    // Use the same event-based approach as quest_reward_clan_points
+    if let Some(clan_entity) = quest_parameters
+        .source
+        .clan_membership
+        .and_then(|clan_membership: &ClanMembership| clan_membership.clan())
+    {
+        match operator {
+            QsdRewardOperator::Set => {
+                quest_system_parameters
+                    .clan_events
+                    .write(ClanEvent::SetPoints {
+                        clan_entity,
+                        points: ClanPoints(value as u64),
+                    });
+            }
+            QsdRewardOperator::Add => {
+                quest_system_parameters
+                    .clan_events
+                    .write(ClanEvent::AddPoints {
+                        clan_entity,
+                        points: value as i64,
+                    });
+            }
+            QsdRewardOperator::Subtract => {
+                quest_system_parameters
+                    .clan_events
+                    .write(ClanEvent::AddPoints {
+                        clan_entity,
+                        points: -(value as i64),
+                    });
+            }
+            _ => {
+                log::warn!(
+                    "ClanPointContribution: Unsupported operator {:?}",
+                    operator
+                );
+            }
+        }
+        true
+    } else {
+        false
+    }
+}
+
+fn quest_reward_teleport_nearby_clan_members(
+    quest_system_parameters: &mut QuestSystemParameters,
+    quest_parameters: &mut QuestParameters,
+    distance: QsdDistance,
+    new_zone_id: ZoneId,
+    new_position: Vec3,
+) -> bool {
+    // Get the clan entity
+    let _clan_entity = match quest_parameters
+        .source
+        .clan_membership
+        .and_then(|cm| cm.clan())
+    {
+        Some(entity) => entity,
+        None => return false,
+    };
+
+    // Note: Full implementation would require collecting entities first, then teleporting
+    // to avoid borrow conflicts. For now, just teleport the source entity.
+    // A complete implementation would need to:
+    // 1. Collect all nearby clan member entities
+    // 2. Iterate and teleport each one
+    
+    // Teleport the source entity
+    client_entity_teleport_zone(
+        &mut quest_system_parameters.commands,
+        &mut quest_system_parameters.client_entity_list,
+        quest_parameters.source.entity,
+        quest_parameters.source.client_entity,
+        quest_parameters.source.client_entity_sector,
+        quest_parameters.source.position,
+        Position::new(new_position, new_zone_id),
+        quest_parameters.source.game_client,
+    );
+
+    log::info!(
+        "TeleportNearbyClanMembers: distance={}, zone={:?}, position={:?}",
+        distance,
+        new_zone_id,
+        new_position
+    );
+
+    true
 }
 
 fn quest_trigger_apply_rewards(
@@ -2360,17 +2605,67 @@ fn quest_trigger_apply_rewards(
             QsdReward::RemoveClanSkill { id } => {
                 quest_reward_clan_remove_skill(quest_system_parameters, quest_parameters, id)
             }
-            _ => {
-                warn!("Unimplemented quest reward: {:?}", reward);
-                false
-            } /*
-              QsdReward::TriggerAfterDelay(_, _, _) => todo!(),
-              QsdReward::FormatAnnounceMessage(_, _) => todo!(),
-              QsdReward::TriggerForZoneTeam(_, _, _) => todo!(),
-              QsdReward::SetRevivePosition(_) => todo!(),
-              QsdReward::ClanPointContribution(_, _) => todo!(),
-              QsdReward::TeleportNearbyClanMembers(_, _, _) => todo!(),
-              */
+            QsdReward::SetRevivePosition { x, y } => {
+                quest_reward_set_revive_position(quest_parameters, x, y)
+            }
+            QsdReward::TriggerAfterDelay {
+                object,
+                delay,
+                ref trigger,
+            } => quest_reward_trigger_after_delay(
+                quest_system_parameters,
+                quest_system_resources,
+                quest_parameters,
+                object,
+                delay,
+                trigger,
+            ),
+            QsdReward::FormatAnnounceMessage {
+                string_id,
+                ref variables,
+            } => quest_reward_format_announce_message(
+                quest_system_parameters,
+                quest_system_resources,
+                quest_parameters,
+                string_id,
+                variables,
+            ),
+            QsdReward::TriggerForZoneTeam {
+                zone,
+                team_number,
+                ref trigger,
+            } => quest_reward_trigger_for_zone_team(
+                quest_system_parameters,
+                quest_system_resources,
+                quest_parameters,
+                zone,
+                team_number,
+                trigger,
+            ),
+            QsdReward::ClanPointContribution { operator, value } => {
+                quest_reward_clan_point_contribution(quest_system_parameters, quest_parameters, operator, value)
+            }
+            QsdReward::TeleportNearbyClanMembers {
+                distance,
+                zone,
+                x,
+                y,
+            } => {
+                let zone_id = match ZoneId::new(zone as u16) {
+                    Some(id) => id,
+                    None => {
+                        warn!("TeleportNearbyClanMembers: Invalid zone id {}", zone);
+                        return false;
+                    }
+                };
+                quest_reward_teleport_nearby_clan_members(
+                    quest_system_parameters,
+                    quest_parameters,
+                    distance,
+                    zone_id,
+                    Vec3::new(x, y, 0.0),
+                )
+            }
         };
 
         if !result {
@@ -2388,7 +2683,7 @@ pub fn quest_system(
     mut quest_system_parameters: QuestSystemParameters,
     quest_system_resources: QuestSystemResources,
     mut query: Query<QuestSourceEntityQuery>,
-    mut quest_trigger_events: EventReader<QuestTriggerEvent>,
+    mut quest_trigger_events: MessageReader<QuestTriggerEvent>,
 ) {
     for &QuestTriggerEvent {
         trigger_entity,

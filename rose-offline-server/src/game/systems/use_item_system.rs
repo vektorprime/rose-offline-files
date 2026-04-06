@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use bevy::{
     ecs::{
-        prelude::{Commands, Entity, EventReader, Query, Res, ResMut},
+        prelude::{Commands, Entity, MessageReader, Query, Res, ResMut},
         query::QueryData,
         system::SystemParam,
     },
@@ -22,7 +22,7 @@ use crate::game::{
     },
     components::{
         AbilityValues, BasicStats, CharacterInfo, ClientEntity, ClientEntitySector,
-        ExperiencePoints, GameClient, Inventory, ItemSlot, Level, MoveSpeed, NextCommand, Position,
+        Cooldowns, ExperiencePoints, GameClient, Inventory, ItemSlot, Level, MoveSpeed, NextCommand, Position,
         SkillList, SkillPoints, Stamina, StatPoints, StatusEffects, StatusEffectsRegen, Team,
         UnionMembership,
     },
@@ -67,11 +67,13 @@ pub struct UseItemUserQuery<'w> {
     status_effects_regen: &'w mut StatusEffectsRegen,
     team: &'w Team,
     union_membership: &'w mut UnionMembership,
+    cooldowns: Option<&'w mut Cooldowns>,
 }
 
 enum UseItemError {
     InvalidItem,
     AbilityRequirement,
+    Cooldown,
 }
 
 fn apply_item_effect(
@@ -79,7 +81,9 @@ fn apply_item_effect(
     use_item_user: &mut UseItemUserQueryItem,
     item_data: &rose_data::ConsumableItemData,
 ) {
+    log::info!("[USE_ITEM] Applying item effect for item: {:?}", item_data);
     if let Some((base_status_effect_id, total_potion_value)) = item_data.apply_status_effect {
+        log::info!("[USE_ITEM] Item has apply_status_effect: id={:?}, value={}", base_status_effect_id, total_potion_value);
         if let Some(base_status_effect) = use_item_system_parameters
             .game_data
             .status_effects
@@ -100,17 +104,25 @@ fn apply_item_effect(
                     .status_effects
                     .can_apply(status_effect_data, status_effect_data.id.get() as i32)
                 {
-                    use_item_user.status_effects.apply_potion(
+                    let expire_time = Instant::now()
+                        + Duration::from_micros(
+                            total_potion_value as u64 * 1000000
+                                / potion_value_per_second as u64,
+                        );
+                    log::info!("[USE_ITEM] Applying potion: effect_id={}, total_value={}, value_per_sec={}, expire_time={:?}, status_effect_type={:?}",
+                        status_effect_data.id.get(), total_potion_value, potion_value_per_second, expire_time, status_effect_data.status_effect_type);
+                    let result = use_item_user.status_effects.apply_potion(
                         &mut use_item_user.status_effects_regen,
                         status_effect_data,
-Instant::now()
-                            + Duration::from_micros(
-                                total_potion_value as u64 * 1000000
-                                    / potion_value_per_second as u64,
-                            ),
+                        expire_time,
                         total_potion_value,
                         potion_value_per_second,
                     );
+                    log::info!("[USE_ITEM] apply_potion result: {}", result);
+                    log::info!("[USE_ITEM] StatusEffects after apply: {:?}", use_item_user.status_effects.active);
+                    log::info!("[USE_ITEM] StatusEffectsRegen after apply: {:?}", use_item_user.status_effects_regen.regens);
+                } else {
+                    log::warn!("[USE_ITEM] can_apply returned false for effect_id={}", status_effect_data.id.get());
                 }
             }
         }
@@ -155,7 +167,12 @@ fn use_inventory_item(
         .get_consumable_item(item.get_item_number())
         .ok_or(UseItemError::InvalidItem)?;
 
-    // TODO: Check use item cooldown
+    // Check use item cooldown
+    if let Some(cooldowns) = use_item_user.cooldowns.as_ref() {
+        if cooldowns.is_item_on_cooldown(item_data.cooldown_type_id, Instant::now()) {
+            return Err(UseItemError::Cooldown);
+        }
+    }
 
     if let Some((require_ability_type, require_ability_value)) = item_data.ability_requirement {
         let ability_value = ability_values_get_value(
@@ -221,7 +238,23 @@ fn use_inventory_item(
                     (false, false)
                 } else if matches!(skill_data.skill_type, SkillType::Warp) {
                     if let Some(zone_id) = skill_data.warp_zone_id {
-                        // TODO: Check skill_data.required_planet
+                        // Check skill_data.required_planet - player must be on the required planet to use this item
+                        if let Some(required_planet) = skill_data.required_planet {
+                            let current_planet = use_item_system_parameters
+                                .game_data
+                                .zones
+                                .get_zone(use_item_user.position.zone_id)
+                                .map(|zone| zone.planet)
+                                .unwrap_or(0);
+                            
+                            if current_planet != required_planet.get() {
+                                // Return item to inventory since we can't use it
+                                let _ = use_item_user
+                                    .inventory
+                                    .try_stack_with_item(item_slot, item.clone());
+                                return Err(UseItemError::AbilityRequirement);
+                            }
+                        }
 
                         // We need to send an update inventory packet before teleporting, otherwise it is lost
                         if let Some(game_client) = use_item_user.game_client {
@@ -315,7 +348,38 @@ fn use_inventory_item(
                 (false, false)
             }
         }
-        ItemClass::RepairTool | ItemClass::TimeCoupon => {
+        ItemClass::RepairTool => {
+            // Repair tool: repair an equipped item
+            if let Some(repair_item_slot) = _repair_item_slot {
+                if let ItemSlot::Equipment(equipment_index) = repair_item_slot {
+                    if let Some(equipment_item) = use_item_user.equipment.get_equipment_item_mut(equipment_index) {
+                        // Restore item durability to maximum (1000)
+                        equipment_item.life = 1000;
+                        
+                        if let Some(game_client) = use_item_user.game_client {
+                            game_client
+                                .server_message_tx
+                                .send(ServerMessage::UpdateItemLife {
+                                    item_slot: repair_item_slot,
+                                    life: equipment_item.life,
+                                })
+                                .ok();
+                        }
+                        
+                        (true, false)
+                    } else {
+                        (false, false)
+                    }
+                } else {
+                    // Can only repair equipment items
+                    (false, false)
+                }
+            } else {
+                // No target item specified
+                (false, false)
+            }
+        }
+        ItemClass::TimeCoupon => {
             warn!(
                 "Unimplemented use item ItemClass {:?} with item {:?}",
                 item_data.item_data.class, item
@@ -329,6 +393,11 @@ fn use_inventory_item(
     };
 
     if consume_item {
+        // Set the item cooldown after successful use
+        if let Some(ref mut cooldowns) = use_item_user.cooldowns {
+            cooldowns.set_item_cooldown(item_data.cooldown_type_id, item_data.cooldown_duration);
+        }
+        
         if let Some(game_client) = use_item_user.game_client {
             if message_to_nearby {
                 use_item_system_parameters
@@ -379,7 +448,7 @@ fn use_inventory_item(
 pub fn use_item_system(
     mut use_item_system_parameters: UseItemSystemParameters,
     mut query_user: Query<UseItemUserQuery>,
-    mut use_item_events: EventReader<UseItemEvent>,
+    mut use_item_events: MessageReader<UseItemEvent>,
 ) {
     for event in use_item_events.read() {
         match *event {

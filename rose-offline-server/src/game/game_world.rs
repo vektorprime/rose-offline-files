@@ -12,6 +12,12 @@ use bevy::{
 };
 use crossbeam_channel::Receiver;
 
+#[cfg(feature = "llm-feedback")]
+use crate::game::llm::{
+    LlmClientResource, LlmCommandSenderResource, LlmConfig, LlmEventQueue, LlmFeedbackState,
+    llm_event_collector_system, llm_feedback_system, llm_process_responses_system,
+    llm_cleanup_stale_responses_system,
+};
 use crate::game::{
     api::LlmBotManager,
     bots::{BotPlugin, process_llm_bot_creations_system},
@@ -23,8 +29,8 @@ use crate::game::{
     },
     messages::control::ControlMessage,
     resources::{
-        BotList, ClientEntityList, ControlChannel, GameConfig, GameData, LoginTokens, ServerList,
-        ServerMessages, WorldRates, WorldTime, ZoneList,
+        BotList, ClientEntityList, ControlChannel, EconomyVariables, GameConfig, GameData, LoginTokens, ServerList,
+        ServerMessages, WorldRates, WorldTime, WorldVariables, ZoneList,
     },
     systems::{
         ability_values_changed_system, ability_values_update_character_system,
@@ -82,12 +88,14 @@ impl GameWorld {
         app.insert_resource(ServerMessages::new());
         app.insert_resource(WorldRates::new());
         app.insert_resource(WorldTime::new());
+        app.insert_resource(WorldVariables::new());
+        app.insert_resource(EconomyVariables::new());
         app.insert_resource(ZoneList::new());
         app.insert_resource(game_config);
         app.insert_resource(game_data);
 
         // Initialize LLM Bot Manager resources if available
-        if let Some(manager) = &self.llm_bot_manager {
+        let command_sender = if let Some(manager) = &self.llm_bot_manager {
             // Get the receiver reference first
             let receiver_ref = manager.command_receiver();
             log::info!("GameWorld: Got receiver reference from manager, is_empty: {}", receiver_ref.is_empty());
@@ -105,6 +113,9 @@ impl GameWorld {
             });
             app.insert_resource(LlmBotCommandReceiver::new(receiver));
             log::info!("LLM Buddy Bot API integration enabled - process_llm_bot_commands_system will be scheduled in PreUpdate");
+            
+            // Return the command sender for LLM feedback system
+            Some(manager.command_sender())
         } else {
             // Insert default empty resources
             app.insert_resource(LlmBotManagerResource::default());
@@ -112,28 +123,62 @@ impl GameWorld {
             let (tx, rx) = crossbeam_channel::unbounded();
             drop(tx); // Close the sender so the receiver never gets anything
             app.insert_resource(LlmBotCommandReceiver::new(rx));
+            None
+        };
+
+        // Initialize LLM Feedback System resources when feature is enabled
+        #[cfg(feature = "llm-feedback")]
+        {
+            // Initialize LLM configuration
+            let llm_config = LlmConfig::default();
+            
+            // Initialize LLM event queue
+            app.insert_resource(LlmEventQueue::new());
+            
+            // Initialize LLM feedback state
+            app.insert_resource(LlmFeedbackState::new());
+            
+            // Initialize LLM client if possible
+            match LlmClientResource::new(&llm_config) {
+                Ok(client_resource) => {
+                    log::info!("LLM Client initialized successfully");
+                    app.insert_resource(client_resource);
+                }
+                Err(e) => {
+                    log::warn!("Failed to initialize LLM Client: {:?}", e);
+                    // Don't insert the client resource - systems will check for its presence
+                }
+            }
+            
+            // Initialize command sender resource if we have a manager
+            if let Some(sender) = command_sender {
+                app.insert_resource(LlmCommandSenderResource::new(sender));
+                log::info!("LLM Command Sender resource initialized");
+            }
+            
+            log::info!("LLM Feedback System resources initialized (feature enabled)");
         }
 
-        app.add_event::<BankEvent>()
-            .add_event::<ChatCommandEvent>()
-            .add_event::<ChatMessageEvent>()
-            .add_event::<ClanEvent>()
-            .add_event::<DamageEvent>()
-            .add_event::<EquipmentEvent>()
-            .add_event::<ItemLifeEvent>()
-            .add_event::<NpcStoreEvent>()
-            .add_event::<PartyEvent>()
-            .add_event::<PartyMemberEvent>()
-            .add_event::<PersonalStoreEvent>()
-            .add_event::<PickupItemEvent>()
-            .add_event::<QuestTriggerEvent>()
-            .add_event::<ReviveEvent>()
-            .add_event::<RewardItemEvent>()
-            .add_event::<RewardXpEvent>()
-            .add_event::<SaveEvent>()
-            .add_event::<SkillEvent>()
-            .add_event::<UseAmmoEvent>()
-            .add_event::<UseItemEvent>();
+        app.add_message::<BankEvent>()
+            .add_message::<ChatCommandEvent>()
+            .add_message::<ChatMessageEvent>()
+            .add_message::<ClanEvent>()
+            .add_message::<DamageEvent>()
+            .add_message::<EquipmentEvent>()
+            .add_message::<ItemLifeEvent>()
+            .add_message::<NpcStoreEvent>()
+            .add_message::<PartyEvent>()
+            .add_message::<PartyMemberEvent>()
+            .add_message::<PersonalStoreEvent>()
+            .add_message::<PickupItemEvent>()
+            .add_message::<QuestTriggerEvent>()
+            .add_message::<ReviveEvent>()
+            .add_message::<RewardItemEvent>()
+            .add_message::<RewardXpEvent>()
+            .add_message::<SaveEvent>()
+            .add_message::<SkillEvent>()
+            .add_message::<UseAmmoEvent>()
+            .add_message::<UseItemEvent>();
 
         /*
         Stage order:
@@ -144,7 +189,9 @@ impl GameWorld {
         - CoreSet::PostUpdate
         - CoreSet::Last
         */
-        app.add_systems(Startup, (startup_clans_system, startup_zones_system, restore_llm_buddy_bots_system));
+        // Note: Bot restoration is now handled when the assigned player logs in
+        // via llm_bot_teleport_to_player_on_login_system, not at server startup
+        app.add_systems(Startup, (startup_clans_system, startup_zones_system));
 
         app.add_systems(
             PreUpdate,
@@ -214,6 +261,36 @@ impl GameWorld {
                 llm_buddy_chat_capture_system,
             ),
         );
+
+        // LLM Feedback Systems (only when feature is enabled)
+        #[cfg(feature = "llm-feedback")]
+        {
+            // Event collector runs in PreUpdate to collect events before feedback processing
+            app.add_systems(
+                PreUpdate,
+                (
+                    llm_event_collector_system,
+                ),
+            );
+
+            // Feedback system runs in Update to process events and query LLM
+            app.add_systems(
+                Update,
+                (
+                    llm_feedback_system,
+                    llm_process_responses_system,
+                    crate::game::systems::llm_bot_admin_command_system,
+                ),
+            );
+
+            // Cleanup runs in Last to remove stale responses
+            app.add_systems(
+                Last,
+                llm_cleanup_stale_responses_system,
+            );
+
+            log::info!("LLM Feedback Systems registered (feature enabled)");
+        }
 
         app.add_systems(
             PostUpdate,

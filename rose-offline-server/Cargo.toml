@@ -4,6 +4,10 @@ version = { workspace = true }
 authors = { workspace = true }
 edition = { workspace = true }
 
+[features]
+default = []
+llm-feedback = []
+
 [dependencies]
 rose-data = { path = "../rose-data" }
 rose-data-irose = { path = "../rose-data-irose" }
@@ -22,7 +26,6 @@ bytes = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 crossbeam-channel = { workspace = true }
-directories = { workspace = true }
 encoding_rs = { workspace = true }
 enum-map = { workspace = true }
 hex = { workspace = true }
@@ -47,3 +50,4 @@ tower = { workspace = true }
 tower-http = { workspace = true }
 uuid = { workspace = true }
 parking_lot = { workspace = true }
+reqwest = { workspace = true }

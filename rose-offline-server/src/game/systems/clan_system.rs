@@ -2,7 +2,7 @@ use std::num::{NonZeroU32, NonZeroUsize};
 
 use bevy::{
     ecs::query::QueryData,
-    prelude::{Changed, Commands, Entity, EventReader, Query, ResMut},
+    prelude::{Changed, Commands, Entity, MessageReader, Query, ResMut},
 };
 
 use rose_data::{ClanMemberPosition, QuestTriggerHash};
@@ -71,7 +71,7 @@ fn send_update_clan_info(clan: &Clan, query_member: &Query<MemberQuery>) {
 
 pub fn clan_system(
     mut commands: Commands,
-    mut clan_events: EventReader<ClanEvent>,
+    mut clan_events: MessageReader<ClanEvent>,
     query_member_connected: Query<MemberQuery, Changed<ClanMembership>>,
     query_member: Query<MemberQuery>,
     mut query_creator: Query<CreatorQuery>,

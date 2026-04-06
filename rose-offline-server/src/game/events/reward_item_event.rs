@@ -1,8 +1,8 @@
-use bevy::{ecs::prelude::Entity, prelude::Event};
+use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
 
 use rose_data::Item;
 
-#[derive(Event)]
+#[derive(Message)]
 pub struct RewardItemEvent {
     pub entity: Entity,
     pub item: Item,

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use bevy::prelude::{Commands, Component, EventWriter, Query, With};
+use bevy::prelude::{Commands, Component, MessageWriter, Query, With};
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
 
 use crate::game::{
@@ -42,7 +42,7 @@ pub fn action_revive_current_zone(
     mut commands: Commands,
     mut query: Query<(&Actor, &mut ActionState), With<ReviveCurrentZone>>,
     query_entity: Query<&Command>,
-    mut revive_events: EventWriter<ReviveEvent>,
+    mut revive_events: MessageWriter<ReviveEvent>,
 ) {
     for (&Actor(entity), mut state) in query.iter_mut() {
         let Ok(command) = query_entity.get(entity) else {
@@ -53,7 +53,7 @@ pub fn action_revive_current_zone(
             ActionState::Requested => {
                 if command.is_dead_for(DEAD_DURATION) {
                     commands.entity(entity).remove::<BotCombatTarget>();
-                    revive_events.send(ReviveEvent {
+                    revive_events.write(ReviveEvent {
                         entity,
                         position: RevivePosition::CurrentZone,
                     });

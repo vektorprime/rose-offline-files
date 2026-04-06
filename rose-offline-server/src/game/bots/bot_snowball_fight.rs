@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use bevy::{
     math::Vec3Swizzles,
-    prelude::{Component, Entity, EventWriter, Query, Res},
+    prelude::{Component, Entity, MessageWriter, Query, Res},
     time::Time,
 };
 use big_brain::prelude::{ActionBuilder, ActionState, Actor};
@@ -33,8 +33,8 @@ pub fn action_snowball_fight(
     query_entity: Query<(&Command, &Inventory, &Position), BotQueryFilterAlive>,
     client_entity_list: Res<ClientEntityList>,
     time: Res<Time>,
-    mut use_item_events: EventWriter<UseItemEvent>,
-    mut reward_item_events: EventWriter<RewardItemEvent>,
+    mut use_item_events: MessageWriter<UseItemEvent>,
+    mut reward_item_events: MessageWriter<RewardItemEvent>,
 ) {
 let now = Instant::now();
     let mut rng = rand::thread_rng();
@@ -60,7 +60,7 @@ let now = Instant::now();
                 let Some(item_slot) = inventory.find_item(SNOWBALL_ITEM_REFERENCE) else {
                     // We do not have a snowball in our inventory, try reward a stack and then set the
                     // state to Success so we go on to wait before next execution.
-                    reward_item_events.send(RewardItemEvent::new(
+                    reward_item_events.write(RewardItemEvent::new(
                         entity,
                         StackableItem::new(SNOWBALL_ITEM_REFERENCE, 999)
                             .unwrap()
@@ -85,7 +85,7 @@ let now = Instant::now();
                     .cloned();
 
                 if let Some(target_entity) = nearby_target {
-                    use_item_events.send(UseItemEvent::from_inventory(
+                    use_item_events.write(UseItemEvent::from_inventory(
                         entity,
                         item_slot,
                         Some(target_entity),

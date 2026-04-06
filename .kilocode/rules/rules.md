@@ -19,9 +19,6 @@ Do NOT run "cargo clean" without asking the user for permission.
 
 
 
-### Web Search
-Use your web search tools if you're stuck and the source code review is not helping
-
 
 ## Task Difficulty
 

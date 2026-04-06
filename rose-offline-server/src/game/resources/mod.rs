@@ -8,6 +8,7 @@ mod server_list;
 mod server_messages;
 mod world_rates;
 mod world_time;
+mod world_variables;
 mod zone_list;
 
 pub use bot_list::{BotList, BotListEntry};
@@ -20,4 +21,5 @@ pub use server_list::{GameServer, ServerList, WorldServer};
 pub use server_messages::ServerMessages;
 pub use world_rates::WorldRates;
 pub use world_time::WorldTime;
+pub use world_variables::{EconomyVariables, WorldVariables};
 pub use zone_list::ZoneList;

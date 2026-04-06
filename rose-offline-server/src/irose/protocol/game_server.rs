@@ -807,6 +807,26 @@ impl GameServer {
                     .write_packet(Packet::from(&PacketServerUpdateMoney { money }))
                     .await?;
             }
+            ServerMessage::UpdateHealthPoints { entity_id: _, hp } => {
+                client
+                    .connection
+                    .write_packet(Packet::from(&PacketServerUpdateAbilityValue {
+                        is_add: false,
+                        ability_type: rose_data::AbilityType::Health,
+                        value: hp,
+                    }))
+                    .await?;
+            }
+            ServerMessage::UpdateManaPoints { entity_id: _, mp } => {
+                client
+                    .connection
+                    .write_packet(Packet::from(&PacketServerUpdateAbilityValue {
+                        is_add: false,
+                        ability_type: rose_data::AbilityType::Mana,
+                        value: mp,
+                    }))
+                    .await?;
+            }
             ServerMessage::RewardItems { items } => {
                 client
                     .connection

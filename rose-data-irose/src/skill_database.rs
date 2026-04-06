@@ -55,8 +55,7 @@ impl StbSkill {
             .map(|x| x.and_then(|x| x.try_into().ok()))
             .iter()
             .zip(self.get_use_ability_value(id).iter())
-            .filter(|(a, b)| a.is_some() && b.is_some())
-            .map(|(a, b)| (a.unwrap(), b.unwrap()))
+            .filter_map(|(a, b)| a.zip(*b))
             .collect()
     }
 
@@ -118,8 +117,7 @@ impl StbSkill {
         self.get_required_skill_id(id)
             .iter()
             .zip(self.get_required_skill_level(id).iter())
-            .filter(|(a, b)| a.is_some() && b.is_some())
-            .map(|(a, b)| (a.unwrap(), b.unwrap()))
+            .filter_map(|(a, b)| a.zip(*b))
             .collect()
     }
 
@@ -131,8 +129,7 @@ impl StbSkill {
             .map(|x| x.and_then(|x| <AbilityType>::try_from(x).ok()))
             .iter()
             .zip(self.get_required_ability_value(id).iter())
-            .filter(|(a, b)| a.is_some() && b.is_some())
-            .map(|(a, b)| (a.unwrap(), b.unwrap()))
+            .filter_map(|(a, b)| a.zip(*b))
             .collect()
     }
 
@@ -204,10 +201,10 @@ fn load_skill(data: &StbSkill, string_database: &StringDatabase, id: usize) -> O
         id: skill_id,
         name: skill_strings
             .as_ref()
-            .map_or("", |x| unsafe { std::mem::transmute(x.name) }),
+            .map_or(String::new(), |x| x.name.to_string()),
         description: skill_strings
             .as_ref()
-            .map_or("", |x| unsafe { std::mem::transmute(x.description) }),
+            .map_or(String::new(), |x| x.description.to_string()),
         base_skill_id: data.get_base_skill_id(id),
         action_mode: data
             .get_action_mode(id)
@@ -219,6 +216,7 @@ fn load_skill(data: &StbSkill, string_database: &StringDatabase, id: usize) -> O
             .map(|x| x.get())
             .unwrap_or(100) as f32
             / 100.0,
+        action_motion_hit_count: data.get_action_motion_hit_count(id).unwrap_or(1),
         add_ability: data.get_add_ability(id),
         basic_command: data.get_basic_command(id).and_then(|x| x.try_into().ok()),
         bullet_effect_id: data.get_bullet_effect_id(id),

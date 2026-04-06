@@ -27,7 +27,7 @@ impl ToolHandler for AttackTargetTool {
     fn tool(&self) -> Tool {
         create_tool(
             "attack_target",
-            "Make a bot attack a specific target entity. Use get_nearby_entities to find valid target entity IDs.",
+            "Make a bot attack a specific target. You can specify either target_entity_id OR target_name. If target_entity_id fails, try using target_name instead.",
             json!({
                 "type": "object",
                 "properties": {
@@ -37,10 +37,14 @@ impl ToolHandler for AttackTargetTool {
                     },
                     "target_entity_id": {
                         "type": "integer",
-                        "description": "Entity ID of the target to attack (use get_nearby_entities to find targets)"
+                        "description": "Entity ID of the target to attack (optional if target_name is provided)"
+                    },
+                    "target_name": {
+                        "type": "string",
+                        "description": "Name of the target monster to attack (optional if target_entity_id is provided)"
                     }
                 },
-                "required": ["bot_id", "target_entity_id"]
+                "required": ["bot_id"]
             }),
         )
     }
@@ -56,16 +60,56 @@ impl ToolHandler for AttackTargetTool {
             Err(e) => return Ok(format_error(format!("Invalid bot_id: {}", e))),
         };
 
-        let request = AttackRequest {
-            target_entity_id: params.target_entity_id,
-        };
+        // If target_entity_id is provided, use it directly
+        if let Some(entity_id) = params.target_entity_id {
+            let request = AttackRequest {
+                target_entity_id: entity_id,
+            };
 
-        match self.api_client.attack_target(&bot_id, request).await {
-            Ok(_) => Ok(format_response(json!({
-                "success": true,
-                "message": format!("Bot {} is attacking target entity {}", bot_id, params.target_entity_id)
-            }))),
-            Err(e) => Ok(format_error(format!("Failed to attack target: {}", e))),
+            match self.api_client.attack_target(&bot_id, request).await {
+                Ok(_) => Ok(format_response(json!({
+                    "success": true,
+                    "message": format!("Bot {} is attacking target entity {}", bot_id, entity_id)
+                }))),
+                Err(e) => Ok(format_error(format!("Failed to attack target: {}", e))),
+            }
+        } else if let Some(target_name) = &params.target_name {
+            // Look up the entity by name from nearby entities
+            match self.api_client.get_nearby_entities(&bot_id, Some(1000.0), Some("monsters")).await {
+                Ok(nearby) => {
+                    // Try exact match first, then partial match
+                    let target = nearby.entities.iter()
+                        .find(|e| e.name == *target_name)
+                        .or_else(|| nearby.entities.iter()
+                            .find(|e| e.name.to_lowercase().contains(&target_name.to_lowercase())));
+                    
+                    if let Some(entity) = target {
+                        let request = AttackRequest {
+                            target_entity_id: entity.entity_id,
+                        };
+
+                        match self.api_client.attack_target(&bot_id, request).await {
+                            Ok(_) => Ok(format_response(json!({
+                                "success": true,
+                                "message": format!("Bot {} is attacking '{}' (entity ID: {})", bot_id, entity.name, entity.entity_id)
+                            }))),
+                            Err(e) => Ok(format_error(format!("Failed to attack target: {}", e))),
+                        }
+                    } else {
+                        let available_names: Vec<&str> = nearby.entities.iter()
+                            .take(10)
+                            .map(|e| e.name.as_str())
+                            .collect();
+                        Ok(format_error(format!(
+                            "Target '{}' not found nearby. Available monsters: {:?}",
+                            target_name, available_names
+                        )))
+                    }
+                }
+                Err(e) => Ok(format_error(format!("Failed to get nearby entities: {}", e))),
+            }
+        } else {
+            Ok(format_error("Either target_entity_id or target_name must be provided"))
         }
     }
 }
@@ -86,7 +130,7 @@ impl ToolHandler for UseSkillTool {
     fn tool(&self) -> Tool {
         create_tool(
             "use_skill",
-            "Make a bot use a skill. Can target entities, positions, or self depending on the skill type. Use get_bot_skills to see available skills.",
+            "Make a bot use a skill. Can target entities, positions, or self depending on the skill type. For entity targeting, you can use either target_entity_id OR target_name. Use get_bot_skills to see available skills.",
             json!({
                 "type": "object",
                 "properties": {
@@ -105,7 +149,11 @@ impl ToolHandler for UseSkillTool {
                     },
                     "target_entity_id": {
                         "type": "integer",
-                        "description": "Target entity ID (required if target_type is 'entity')"
+                        "description": "Target entity ID (optional if target_name is provided)"
+                    },
+                    "target_name": {
+                        "type": "string",
+                        "description": "Name of the target entity - can be a player name or monster name (optional if target_entity_id is provided)"
                     },
                     "target_position": {
                         "type": "object",
@@ -141,11 +189,48 @@ impl ToolHandler for UseSkillTool {
             other => return Ok(format_error(format!("Invalid target_type: {}. Must be 'entity', 'position', or 'self'", other))),
         };
 
+        // Handle entity targeting - support both entity_id and name-based lookup
+        let final_entity_id = if target_type == SkillTargetType::Entity {
+            if let Some(entity_id) = params.target_entity_id {
+                // Use entity_id directly if provided
+                Some(entity_id)
+            } else if let Some(target_name) = &params.target_name {
+                // Look up entity by name from nearby entities
+                match self.api_client.get_nearby_entities(&bot_id, Some(1000.0), None).await {
+                    Ok(nearby) => {
+                        // Try exact match first, then partial match (case-insensitive)
+                        let target = nearby.entities.iter()
+                            .find(|e| e.name == *target_name)
+                            .or_else(|| nearby.entities.iter()
+                                .find(|e| e.name.to_lowercase().contains(&target_name.to_lowercase())));
+                        
+                        if let Some(entity) = target {
+                            Some(entity.entity_id)
+                        } else {
+                            let available_names: Vec<&str> = nearby.entities.iter()
+                                .take(10)
+                                .map(|e| e.name.as_str())
+                                .collect();
+                            return Ok(format_error(format!(
+                                "Target '{}' not found nearby. Available entities: {:?}",
+                                target_name, available_names
+                            )));
+                        }
+                    }
+                    Err(e) => return Ok(format_error(format!("Failed to get nearby entities: {}", e))),
+                }
+            } else {
+                return Ok(format_error("Either target_entity_id or target_name must be provided when target_type is 'entity'"));
+            }
+        } else {
+            params.target_entity_id
+        };
+
         // Validate required parameters based on target type
         match &target_type {
             SkillTargetType::Entity => {
-                if params.target_entity_id.is_none() {
-                    return Ok(format_error("target_entity_id is required when target_type is 'entity'"));
+                if final_entity_id.is_none() {
+                    return Ok(format_error("target_entity_id or target_name is required when target_type is 'entity'"));
                 }
             }
             SkillTargetType::Position => {
@@ -159,15 +244,15 @@ impl ToolHandler for UseSkillTool {
         let request = SkillRequest {
             skill_id: params.skill_id,
             target_type,
-            target_entity_id: params.target_entity_id,
+            target_entity_id: final_entity_id,
             target_position: params.target_position.map(|p| Position::new(p.x, p.y, p.z)),
         };
 
         match self.api_client.use_skill(&bot_id, request).await {
             Ok(_) => Ok(format_response(json!({
                 "success": true,
-                "message": format!("Bot {} is using skill {} with {} targeting", 
-                    bot_id, 
+                "message": format!("Bot {} is using skill {} with {} targeting",
+                    bot_id,
                     params.skill_id,
                     params.target_type
                 )

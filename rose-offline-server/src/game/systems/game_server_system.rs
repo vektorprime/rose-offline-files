@@ -1,6 +1,6 @@
 use bevy::{
+    prelude::{Commands, Entity, MessageWriter, Query, Res, ResMut, Without},
     ecs::{
-        prelude::{Commands, Entity, EventWriter, Query, Res, ResMut, Without},
         query::QueryData,
         system::SystemParam,
     },
@@ -348,7 +348,7 @@ pub fn game_server_join_system(
     world_rates: Res<WorldRates>,
     world_time: Res<WorldTime>,
     mut party_query: Query<(Entity, &mut Party)>,
-    mut party_member_events: EventWriter<PartyMemberEvent>,
+    mut party_member_events: MessageWriter<PartyMemberEvent>,
 ) {
     query.iter().for_each(
         |(
@@ -385,7 +385,7 @@ pub fn game_server_join_system(
                                         {
                                             *party_member = PartyMember::Online(entity);
                                             party_membership = PartyMembership::new(party_entity);
-                                            party_member_events.send(PartyMemberEvent::Reconnect {
+                                            party_member_events.write(PartyMemberEvent::Reconnect {
                                                 party_entity,
                                                 reconnect_entity: entity,
                                                 character_id: character_info.unique_id,
@@ -455,18 +455,18 @@ pub struct GameClientQuery<'w> {
 
 #[derive(SystemParam)]
 pub struct GameEvents<'w> {
-    bank_events: EventWriter<'w, BankEvent>,
-    chat_command_events: EventWriter<'w, ChatCommandEvent>,
-    chat_message_events: EventWriter<'w, ChatMessageEvent>,
-    clan_events: EventWriter<'w, ClanEvent>,
-    equipment_events: EventWriter<'w, EquipmentEvent>,
-    item_life_events: EventWriter<'w, ItemLifeEvent>,
-    npc_store_events: EventWriter<'w, NpcStoreEvent>,
-    party_events: EventWriter<'w, PartyEvent>,
-    personal_store_events: EventWriter<'w, PersonalStoreEvent>,
-    quest_trigger_events: EventWriter<'w, QuestTriggerEvent>,
-    revive_events: EventWriter<'w, ReviveEvent>,
-    use_item_events: EventWriter<'w, UseItemEvent>,
+    bank_events: MessageWriter<'w, BankEvent>,
+    chat_command_events: MessageWriter<'w, ChatCommandEvent>,
+    chat_message_events: MessageWriter<'w, ChatMessageEvent>,
+    clan_events: MessageWriter<'w, ClanEvent>,
+    equipment_events: MessageWriter<'w, EquipmentEvent>,
+    item_life_events: MessageWriter<'w, ItemLifeEvent>,
+    npc_store_events: MessageWriter<'w, NpcStoreEvent>,
+    party_events: MessageWriter<'w, PartyEvent>,
+    personal_store_events: MessageWriter<'w, PersonalStoreEvent>,
+    quest_trigger_events: MessageWriter<'w, QuestTriggerEvent>,
+    revive_events: MessageWriter<'w, ReviveEvent>,
+    use_item_events: MessageWriter<'w, UseItemEvent>,
 }
 
 pub fn game_server_main_system(
@@ -488,7 +488,7 @@ pub fn game_server_main_system(
                     if text.chars().next().map_or(false, |c| c == '/') {
                         events
                             .chat_command_events
-                            .send(ChatCommandEvent::new(game_client.entity, text));
+                            .write(ChatCommandEvent::new(game_client.entity, text));
                     } else {
                         server_messages.send_entity_message(
                             game_client.client_entity,
@@ -498,7 +498,7 @@ pub fn game_server_main_system(
                             },
                         );
 
-                        events.chat_message_events.send(ChatMessageEvent {
+                        events.chat_message_events.write(ChatMessageEvent {
                             sender_entity: game_client.entity,
                             sender_name: game_client.character_info.name.clone(),
                             zone_id: game_client.position.zone_id,
@@ -559,7 +559,7 @@ pub fn game_server_main_system(
                 } => {
                     events
                         .equipment_events
-                        .send(EquipmentEvent::ChangeEquipment {
+                        .write(EquipmentEvent::ChangeEquipment {
                             entity: game_client.entity,
                             equipment_index,
                             item_slot,
@@ -571,7 +571,7 @@ pub fn game_server_main_system(
                 } => {
                     events
                         .equipment_events
-                        .send(EquipmentEvent::ChangeVehiclePart {
+                        .write(EquipmentEvent::ChangeVehiclePart {
                             entity: game_client.entity,
                             vehicle_part_index,
                             item_slot,
@@ -581,7 +581,7 @@ pub fn game_server_main_system(
                     ammo_index,
                     item_slot,
                 } => {
-                    events.equipment_events.send(EquipmentEvent::ChangeAmmo {
+                    events.equipment_events.write(EquipmentEvent::ChangeAmmo {
                         entity: game_client.entity,
                         ammo_index,
                         item_slot,
@@ -663,7 +663,7 @@ pub fn game_server_main_system(
                 }
                 ClientMessage::ReviveCurrentZone => {
                     if game_client.dead.is_some() {
-                        events.revive_events.send(ReviveEvent {
+                        events.revive_events.write(ReviveEvent {
                             entity: game_client.entity,
                             position: RevivePosition::CurrentZone,
                         });
@@ -671,7 +671,7 @@ pub fn game_server_main_system(
                 }
                 ClientMessage::ReviveSaveZone => {
                     if game_client.dead.is_some() {
-                        events.revive_events.send(ReviveEvent {
+                        events.revive_events.write(ReviveEvent {
                             entity: game_client.entity,
                             position: RevivePosition::SaveZone,
                         });
@@ -706,7 +706,7 @@ pub fn game_server_main_system(
                     }
                 }
                 ClientMessage::QuestTrigger { trigger } => {
-                    events.quest_trigger_events.send(QuestTriggerEvent {
+                    events.quest_trigger_events.write(QuestTriggerEvent {
                         trigger_entity: game_client.entity,
                         trigger_hash: trigger,
                     });
@@ -718,7 +718,7 @@ pub fn game_server_main_system(
                     {
                         events
                             .personal_store_events
-                            .send(PersonalStoreEvent::ListItems {
+                            .write(PersonalStoreEvent::ListItems {
                                 store_entity: *store_entity,
                                 list_entity: game_client.entity,
                             });
@@ -735,7 +735,7 @@ pub fn game_server_main_system(
                     {
                         events
                             .personal_store_events
-                            .send(PersonalStoreEvent::BuyItem {
+                            .write(PersonalStoreEvent::BuyItem {
                                 store_entity: *store_entity,
                                 buyer_entity: game_client.entity,
                                 store_slot_index,
@@ -755,7 +755,7 @@ pub fn game_server_main_system(
                         })
                         .map(|(target_entity, _, _)| *target_entity);
 
-                    events.use_item_events.send(UseItemEvent::from_inventory(
+                    events.use_item_events.write(UseItemEvent::from_inventory(
                         game_client.entity,
                         item_slot,
                         target_entity,
@@ -827,7 +827,7 @@ pub fn game_server_main_system(
                         .get_zone(game_client.position.zone_id)
                         .and_then(|zone| zone.get_entity(npc_entity_id))
                     {
-                        events.npc_store_events.send(NpcStoreEvent {
+                        events.npc_store_events.write(NpcStoreEvent {
                             store_entity: *npc_entity,
                             transaction_entity: game_client.entity,
                             buy_items,
@@ -870,7 +870,7 @@ pub fn game_server_main_system(
                             // TODO: Check if we have a valid cart equipped....
 
                             // Starting driving decreases vehicle engine life
-                            events.item_life_events.send(
+                            events.item_life_events.write(
                                 ItemLifeEvent::DecreaseVehicleEngineLife {
                                     entity: game_client.entity,
                                     amount: None,
@@ -996,14 +996,14 @@ pub fn game_server_main_system(
                         .get_zone(game_client.position.zone_id)
                         .and_then(|zone| zone.get_entity(invited_entity_id))
                     {
-                        events.party_events.send(PartyEvent::Invite {
+                        events.party_events.write(PartyEvent::Invite {
                             owner_entity: game_client.entity,
                             invited_entity,
                         });
                     }
                 }
                 ClientMessage::PartyLeave => {
-                    events.party_events.send(PartyEvent::Leave {
+                    events.party_events.write(PartyEvent::Leave {
                         leaver_entity: game_client.entity,
                     });
                 }
@@ -1014,14 +1014,14 @@ pub fn game_server_main_system(
                         .get_zone(game_client.position.zone_id)
                         .and_then(|zone| zone.get_entity(new_owner_entity_id))
                     {
-                        events.party_events.send(PartyEvent::ChangeOwner {
+                        events.party_events.write(PartyEvent::ChangeOwner {
                             owner_entity: game_client.entity,
                             new_owner_entity,
                         });
                     }
                 }
                 ClientMessage::PartyKick { character_id } => {
-                    events.party_events.send(PartyEvent::Kick {
+                    events.party_events.write(PartyEvent::Kick {
                         owner_entity: game_client.entity,
                         kick_character_id: character_id,
                     });
@@ -1032,7 +1032,7 @@ pub fn game_server_main_system(
                         .get_zone(game_client.position.zone_id)
                         .and_then(|zone| zone.get_entity(owner_entity_id))
                     {
-                        events.party_events.send(PartyEvent::AcceptInvite {
+                        events.party_events.write(PartyEvent::AcceptInvite {
                             owner_entity,
                             invited_entity: game_client.entity,
                         });
@@ -1046,7 +1046,7 @@ pub fn game_server_main_system(
                         .get_zone(game_client.position.zone_id)
                         .and_then(|zone| zone.get_entity(owner_entity_id))
                     {
-                        events.party_events.send(PartyEvent::RejectInvite {
+                        events.party_events.write(PartyEvent::RejectInvite {
                             reason,
                             owner_entity,
                             invited_entity: game_client.entity,
@@ -1057,7 +1057,7 @@ pub fn game_server_main_system(
                     item_sharing,
                     xp_sharing,
                 } => {
-                    events.party_events.send(PartyEvent::UpdateRules {
+                    events.party_events.write(PartyEvent::UpdateRules {
                         owner_entity: game_client.entity,
                         item_sharing,
                         xp_sharing,
@@ -1160,7 +1160,7 @@ pub fn game_server_main_system(
                     }
                 }
                 ClientMessage::BankOpen => {
-                    events.bank_events.send(BankEvent::Open {
+                    events.bank_events.write(BankEvent::Open {
                         entity: game_client.entity,
                     });
                 }
@@ -1169,7 +1169,7 @@ pub fn game_server_main_system(
                     item,
                     is_premium,
                 } => {
-                    events.bank_events.send(BankEvent::DepositItem {
+                    events.bank_events.write(BankEvent::DepositItem {
                         entity: game_client.entity,
                         item_slot,
                         item,
@@ -1181,7 +1181,7 @@ pub fn game_server_main_system(
                     item,
                     is_premium,
                 } => {
-                    events.bank_events.send(BankEvent::WithdrawItem {
+                    events.bank_events.write(BankEvent::WithdrawItem {
                         entity: game_client.entity,
                         bank_slot,
                         item,
@@ -1235,7 +1235,7 @@ pub fn game_server_main_system(
                     description,
                     mark,
                 } => {
-                    events.clan_events.send(ClanEvent::Create {
+                    events.clan_events.write(ClanEvent::Create {
                         creator: game_client.entity,
                         name,
                         description,

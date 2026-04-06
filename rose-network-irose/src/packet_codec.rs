@@ -400,9 +400,20 @@ where
     }
 
     fn encrypt_packet(&self, buffer: &mut BytesMut) {
+        // Minimum packet size is 6 bytes (2 size + 4 header + data)
+        if buffer.len() < 6 {
+            return;
+        }
+        
         let add_table_value = 0u16;
         let encrypt_add_value = 0u8;
         let size = (&buffer[0..2]).get_u16_le();
+        
+        // Validate packet size doesn't exceed buffer length
+        if size as usize > buffer.len() {
+            return;
+        }
+        
         let head = Head::new()
             .with_add_table_value(add_table_value)
             .with_encrypt_add_value(encrypt_add_value)
@@ -410,7 +421,10 @@ where
             .with_add_buffer_len(size)
             .with_command((&buffer[2..4]).get_u16_le());
 
-        let mut head_server = E::from_header_bytes(buffer[0..5].try_into().unwrap());
+        let mut head_server = match buffer[0..5].try_into() {
+            Ok(bytes) => E::from_header_bytes(bytes),
+            Err(_) => return,
+        };
         head_server.encode_main(&head);
         buffer[0..5].copy_from_slice(&head_server.into_header_bytes());
 
@@ -430,28 +444,50 @@ where
 
         buffer[5] = checksum;
 
-        let mut head_server = E::from_header_bytes(buffer[0..5].try_into().unwrap());
+        let mut head_server = match buffer[0..5].try_into() {
+            Ok(bytes) => E::from_header_bytes(bytes),
+            Err(_) => return,
+        };
         head_server.encode_final(&head);
         buffer[0..5].copy_from_slice(&head_server.into_header_bytes());
     }
 
     fn decrypt_packet_header(&self, buffer: &mut BytesMut) -> usize {
+        // Minimum header size is 5 bytes
+        if buffer.len() < 5 {
+            return 0;
+        }
+        
         let mut head = Head::new();
-        D::from_header_bytes(buffer[0..5].try_into().unwrap()).decode_final(&mut head);
+        match buffer[0..5].try_into() {
+            Ok(bytes) => D::from_header_bytes(bytes).decode_final(&mut head),
+            Err(_) => return 0,
+        };
         let add_table_value = head.add_table_value();
 
         for i in 0..5 {
             buffer[i] ^= self.table[i * 2048 + add_table_value as usize] as u8;
         }
 
-        D::from_header_bytes(buffer[0..5].try_into().unwrap()).decode_main(&mut head);
+        match buffer[0..5].try_into() {
+            Ok(bytes) => D::from_header_bytes(bytes).decode_main(&mut head),
+            Err(_) => return 0,
+        };
 
         buffer[0..5].copy_from_slice(&head.into_bytes());
         head.add_buffer_len() as usize
     }
 
     fn decrypt_packet_body(&self, buffer: &mut BytesMut) -> bool {
-        let head = Head::from_bytes(buffer[0..5].try_into().unwrap());
+        // Minimum packet size is 6 bytes
+        if buffer.len() < 6 {
+            return false;
+        }
+        
+        let head = match buffer[0..5].try_into() {
+            Ok(bytes) => Head::from_bytes(bytes),
+            Err(_) => return false,
+        };
         let mut checksum: u8 = 0;
         for i in 0..5 {
             checksum = self.crc_table[(buffer[i] ^ checksum) as usize];
@@ -460,7 +496,15 @@ where
         let add_buffer_len = head.add_buffer_len() as usize;
         let encrypt_add_value = head.encrypt_add_value() as usize;
         let add_table_value = head.add_table_value() as usize;
-        let data_length = add_buffer_len - head.encrypt_value() as usize;
+        // Use saturating_sub to prevent integer underflow
+        let data_length = add_buffer_len.saturating_sub(head.encrypt_value() as usize);
+        if data_length == 0 {
+            return false;
+        }
+        // Validate data_length doesn't exceed buffer length
+        if data_length > buffer.len() {
+            return false;
+        }
         for i in 6..data_length {
             let table_start = ((encrypt_add_value + i) & 0xF) * 2048;
             let table_offset = (add_table_value + i) & 0x7FF;

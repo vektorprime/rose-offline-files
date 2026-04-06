@@ -42,16 +42,16 @@ pub fn get_quest_database(
                 id: row,
                 name: quest_strings
                     .as_ref()
-                    .map_or("", |x| unsafe { std::mem::transmute(x.name) }),
+                    .map_or(String::new(), |x| x.name.to_string()),
                 description: quest_strings
                     .as_ref()
-                    .map_or("", |x| unsafe { std::mem::transmute(x.description) }),
+                    .map_or(String::new(), |x| x.description.to_string()),
                 start_message: quest_strings
                     .as_ref()
-                    .map_or("", |x| unsafe { std::mem::transmute(x.start_message) }),
+                    .map_or(String::new(), |x| x.start_message.to_string()),
                 end_message: quest_strings
                     .as_ref()
-                    .map_or("", |x| unsafe { std::mem::transmute(x.end_message) }),
+                    .map_or(String::new(), |x| x.end_message.to_string()),
                 time_limit,
             }));
         } else {

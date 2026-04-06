@@ -4,7 +4,7 @@ use std::{
     num::{ParseFloatError, ParseIntError},
 };
 
-use bevy::{ecs::query::QueryData, prelude::{Commands, Entity, EventReader, EventWriter, Query, Res, ResMut}, math::{UVec2, Vec3, Vec3Swizzles}, time::Time};
+use bevy::{ecs::query::QueryData, prelude::{Commands, Entity, MessageReader, MessageWriter, Query, Res, ResMut}, math::{UVec2, Vec3, Vec3Swizzles}, time::Time};
 use bevy::ecs::system::SystemParam;
 use clap::{Arg, PossibleValue};
 use lazy_static::lazy_static;
@@ -52,13 +52,13 @@ pub struct ChatCommandParams<'w, 's> {
     bot_list: ResMut<'w, BotList>,
     client_entity_list: ResMut<'w, ClientEntityList>,
     game_data: Res<'w, GameData>,
-    clan_events: EventWriter<'w, ClanEvent>,
-    chat_message_events: EventWriter<'w, ChatMessageEvent>,
-    reward_xp_events: EventWriter<'w, RewardXpEvent>,
-    damage_events: EventWriter<'w, DamageEvent>,
-    reward_item_events: EventWriter<'w, RewardItemEvent>,
-    revive_events: EventWriter<'w, ReviveEvent>,
-    save_events: EventWriter<'w, SaveEvent>,
+    clan_events: MessageWriter<'w, ClanEvent>,
+    chat_message_events: MessageWriter<'w, ChatMessageEvent>,
+    reward_xp_events: MessageWriter<'w, RewardXpEvent>,
+    damage_events: MessageWriter<'w, DamageEvent>,
+    reward_item_events: MessageWriter<'w, RewardItemEvent>,
+    revive_events: MessageWriter<'w, ReviveEvent>,
+    save_events: MessageWriter<'w, SaveEvent>,
     server_messages: ResMut<'w, ServerMessages>,
     time: Res<'w, Time>,
     world_rates: ResMut<'w, WorldRates>,
@@ -536,15 +536,20 @@ fn handle_chat_command(
             } else if let Some(zone_data) = chat_command_params.game_data.zones.get_zone(zone_id) {
                 (zone_data.start_position.x, zone_data.start_position.y)
             } else {
-                (520.0, 520.0)
+                // Default spawn position for zones not in game data (e.g., empty zone 1337)
+                (1000.0, 1000.0)
             };
 
-            let _zone = chat_command_params
+            // Allow teleporting to empty zone 1337 even if not in the normal zone list
+            const EMPTY_ZONE_ID: u16 = 1337;
+            let zone_exists = chat_command_params
                 .client_entity_list
                 .get_zone(zone_id)
-                .ok_or_else(|| {
-                    ChatCommandError::WithMessage(format!("Invalid zone id {}", zone_id.get()))
-                })?;
+                .is_some();
+            
+            if !zone_exists && zone_id.get() != EMPTY_ZONE_ID {
+                return Err(ChatCommandError::WithMessage(format!("Invalid zone id {}", zone_id.get())));
+            }
 
             client_entity_teleport_zone(
                 &mut chat_command_params.commands,
@@ -553,7 +558,7 @@ fn handle_chat_command(
                 chat_command_user.client_entity,
                 chat_command_user.client_entity_sector,
                 chat_command_user.position,
-                Position::new(Vec3::new(x, y, 0.0), zone_id),
+                Position::new(Vec3::new(x, y, 0.0), zone_id), // Chat command teleport uses Z=0 (no Z in command)
                 Some(chat_command_user.game_client),
             );
         }
@@ -577,7 +582,7 @@ fn handle_chat_command(
 
             chat_command_params
                 .reward_xp_events
-                .send(RewardXpEvent::new(
+                .write(RewardXpEvent::new(
                     chat_command_user.entity,
                     required_xp,
                     false,
@@ -1014,7 +1019,7 @@ fn handle_chat_command(
                     if chat_command_user.entity != defender {
                         chat_command_params
                             .damage_events
-                            .send(DamageEvent::Immediate {
+                            .write(DamageEvent::Immediate {
                                 attacker: chat_command_user.entity,
                                 defender,
                                 damage,
@@ -1197,7 +1202,7 @@ fn handle_chat_command(
             } else {
                 chat_command_params
                     .reward_item_events
-                    .send(RewardItemEvent::new(chat_command_user.entity, item, true));
+                    .write(RewardItemEvent::new(chat_command_user.entity, item, true));
             }
         }
         ("clan", arg_matches) => {
@@ -1208,13 +1213,13 @@ fn handle_chat_command(
                 if let Some(clan_entity) = chat_command_user.clan_membership.clan() {
                     match cmd {
                         "add" => {
-                            chat_command_params.clan_events.send(ClanEvent::AddLevel {
+                            chat_command_params.clan_events.write(ClanEvent::AddLevel {
                                 clan_entity,
                                 level: value,
                             });
                         }
                         "set" => {
-                            chat_command_params.clan_events.send(ClanEvent::SetLevel {
+                            chat_command_params.clan_events.write(ClanEvent::SetLevel {
                                 clan_entity,
                                 level: ClanLevel::new(value as u32)
                                     .ok_or(ChatCommandError::InvalidArguments)?,
@@ -1230,13 +1235,13 @@ fn handle_chat_command(
                 if let Some(clan_entity) = chat_command_user.clan_membership.clan() {
                     match cmd {
                         "add" => {
-                            chat_command_params.clan_events.send(ClanEvent::AddPoints {
+                            chat_command_params.clan_events.write(ClanEvent::AddPoints {
                                 clan_entity,
                                 points: value,
                             });
                         }
                         "set" => {
-                            chat_command_params.clan_events.send(ClanEvent::SetPoints {
+                            chat_command_params.clan_events.write(ClanEvent::SetPoints {
                                 clan_entity,
                                 points: ClanPoints(value as u64),
                             });
@@ -1251,13 +1256,13 @@ fn handle_chat_command(
                 if let Some(clan_entity) = chat_command_user.clan_membership.clan() {
                     match cmd {
                         "add" => {
-                            chat_command_params.clan_events.send(ClanEvent::AddMoney {
+                            chat_command_params.clan_events.write(ClanEvent::AddMoney {
                                 clan_entity,
                                 money: value,
                             });
                         }
                         "set" => {
-                            chat_command_params.clan_events.send(ClanEvent::SetMoney {
+                            chat_command_params.clan_events.write(ClanEvent::SetMoney {
                                 clan_entity,
                                 money: Money(value),
                             });
@@ -1272,7 +1277,7 @@ fn handle_chat_command(
                 if let Some(clan_entity) = chat_command_user.clan_membership.clan() {
                     match cmd {
                         "add" => {
-                            chat_command_params.clan_events.send(ClanEvent::AddSkill {
+                            chat_command_params.clan_events.write(ClanEvent::AddSkill {
                                 clan_entity,
                                 skill_id: SkillId::new(value)
                                     .ok_or(ChatCommandError::InvalidArguments)?,
@@ -1281,7 +1286,7 @@ fn handle_chat_command(
                         "remove" => {
                             chat_command_params
                                 .clan_events
-                                .send(ClanEvent::RemoveSkill {
+                                .write(ClanEvent::RemoveSkill {
                                     clan_entity,
                                     skill_id: SkillId::new(value)
                                         .ok_or(ChatCommandError::InvalidArguments)?,
@@ -1508,7 +1513,7 @@ fn handle_chat_command(
                 },
             );
 
-            chat_command_params.chat_message_events.send(ChatMessageEvent {
+            chat_command_params.chat_message_events.write(ChatMessageEvent {
                 sender_entity: chat_command_user.entity,
                 sender_name: chat_command_user.character_info.name.clone(),
                 zone_id: chat_command_user.position.zone_id,
@@ -1621,7 +1626,7 @@ fn handle_chat_command(
         ("revive", _) => {
             // Check if player is actually dead
             if chat_command_user.dead.is_some() {
-                chat_command_params.revive_events.send(ReviveEvent {
+                chat_command_params.revive_events.write(ReviveEvent {
                     entity: chat_command_user.entity,
                     position: RevivePosition::CurrentZone,
                 });
@@ -1690,7 +1695,7 @@ fn handle_chat_command(
         }
         // /save - Force save character
         ("save", _) => {
-            chat_command_params.save_events.send(SaveEvent::Character {
+            chat_command_params.save_events.write(SaveEvent::Character {
                 entity: chat_command_user.entity,
                 remove_after_save: false,
             });
@@ -1756,7 +1761,7 @@ fn handle_chat_command(
 pub fn chat_commands_system(
     mut chat_command_params: ChatCommandParams,
     mut user_query: Query<ChatCommandUserQuery>,
-    mut chat_command_events: EventReader<ChatCommandEvent>,
+    mut chat_command_events: MessageReader<ChatCommandEvent>,
 ) {
     for &ChatCommandEvent {
         entity,

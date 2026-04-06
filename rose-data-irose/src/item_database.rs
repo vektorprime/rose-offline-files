@@ -297,10 +297,10 @@ fn load_base_item(
         id: ItemReference::new(item_type, id),
         name: item_strings
             .as_ref()
-            .map_or("", |x| unsafe { std::mem::transmute(x.name) }),
+            .map_or(String::new(), |x| x.name.to_string()),
         description: item_strings
             .as_ref()
-            .map_or("", |x| unsafe { std::mem::transmute(x.description) }),
+            .map_or(String::new(), |x| x.description.to_string()),
         class: data
             .get_item_class(id)
             .unwrap_or(IroseItemClass::Unknown)

@@ -12,6 +12,7 @@ mod protocol;
 
 use std::{
     path::{Path, PathBuf},
+    process::ExitCode,
     sync::Arc,
 };
 
@@ -44,8 +45,8 @@ impl Default for ProtocolType {
     }
 }
 
-async fn async_main() {
-    TermLogger::init(
+async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
+    if let Err(e) = TermLogger::init(
         LevelFilter::Trace,
         ConfigBuilder::new()
             .set_location_level(LevelFilter::Trace)
@@ -56,8 +57,10 @@ async fn async_main() {
             .build(),
         TerminalMode::Stdout,
         ColorChoice::Auto,
-    )
-    .expect("Failed to initialise logging");
+    ) {
+        eprintln!("Failed to initialise logging: {}", e);
+        return Err(e.into());
+    }
 
     let mut command = Command::new("rose-offline")
         .arg(
@@ -126,11 +129,50 @@ async fn async_main() {
         "Must specify at least one of --data-idx or --data-path",
     );
     let matches = command.get_matches();
-    let listen_ip = matches.value_of("ip").unwrap();
-    let login_port = matches.value_of("login-port").unwrap();
-    let world_port = matches.value_of("world-port").unwrap();
-    let game_port = matches.value_of("game-port").unwrap();
-    let api_port: u16 = matches.value_of("api-port").unwrap().parse().unwrap_or(8080);
+    
+    let listen_ip = match matches.value_of("ip") {
+        Some(ip) => ip,
+        None => {
+            log::error!("Failed to get 'ip' argument, which has a default value");
+            return Err("Failed to get 'ip' argument".into());
+        }
+    };
+    
+    let login_port = match matches.value_of("login-port") {
+        Some(port) => port,
+        None => {
+            log::error!("Failed to get 'login-port' argument, which has a default value");
+            return Err("Failed to get 'login-port' argument".into());
+        }
+    };
+    
+    let world_port = match matches.value_of("world-port") {
+        Some(port) => port,
+        None => {
+            log::error!("Failed to get 'world-port' argument, which has a default value");
+            return Err("Failed to get 'world-port' argument".into());
+        }
+    };
+    
+    let game_port = match matches.value_of("game-port") {
+        Some(port) => port,
+        None => {
+            log::error!("Failed to get 'game-port' argument, which has a default value");
+            return Err("Failed to get 'game-port' argument".into());
+        }
+    };
+    
+    let api_port: u16 = match matches.value_of("api-port") {
+        Some(port) => port.parse().unwrap_or_else(|e| {
+            log::error!("Failed to parse 'api-port' value: {}", e);
+            8080
+        }),
+        None => {
+            log::error!("Failed to get 'api-port' argument, which has a default value");
+            return Err("Failed to get 'api-port' argument".into());
+        }
+    };
+    
     let enable_api = matches.is_present("enable-api");
     let protocol_type = match matches.value_of("protocol") {
         Some("irose") => ProtocolType::Irose,
@@ -171,9 +213,18 @@ async fn async_main() {
             "Loading game data from vfs {}",
             data_idx_path.to_string_lossy()
         );
-        vfs_devices.push(Box::new(VfsIndex::load(data_idx_path).unwrap_or_else(
-            |_| panic!("Failed to load {}", data_idx_path.to_string_lossy()),
-        )));
+        let vfs_index = match VfsIndex::load(data_idx_path) {
+            Ok(index) => index,
+            Err(e) => {
+                log::error!(
+                    "Failed to load VFS index from {}: {}",
+                    data_idx_path.to_string_lossy(),
+                    e
+                );
+                return Err(e.into());
+            }
+        };
+        vfs_devices.push(Box::new(vfs_index));
 
         let index_root_path = data_idx_path
             .parent()
@@ -247,38 +298,83 @@ async fn async_main() {
         log::info!("LLM Buddy Bot REST API server started on {}:{}", listen_ip, api_port);
     }
 
-    let mut login_server = LoginServer::new(
-        TcpListener::bind(format!("{}:{}", listen_ip, login_port))
-            .await
-            .unwrap(),
-        login_protocol,
-        game_control_tx.clone(),
-    )
-    .await
-    .unwrap();
+    let login_listener = match TcpListener::bind(format!("{}:{}", listen_ip, login_port)).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            log::error!(
+                "Failed to bind login server to {}:{}: {}",
+                listen_ip,
+                login_port,
+                e
+            );
+            return Err(e.into());
+        }
+    };
 
-    let mut world_server = WorldServer::new(
+    let mut login_server = match LoginServer::new(login_listener, login_protocol, game_control_tx.clone()).await {
+        Ok(server) => server,
+        Err(e) => {
+            log::error!("Failed to initialize login server: {}", e);
+            return Err(e.into());
+        }
+    };
+
+    let world_listener = match TcpListener::bind(format!("{}:{}", listen_ip, world_port)).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            log::error!(
+                "Failed to bind world server to {}:{}: {}",
+                listen_ip,
+                world_port,
+                e
+            );
+            return Err(e.into());
+        }
+    };
+
+    let mut world_server = match WorldServer::new(
         String::from("_WorldServer"),
-        TcpListener::bind(format!("{}:{}", listen_ip, world_port))
-            .await
-            .unwrap(),
+        world_listener,
         world_protocol,
         game_control_tx.clone(),
     )
     .await
-    .unwrap();
+    {
+        Ok(server) => server,
+        Err(e) => {
+            log::error!("Failed to initialize world server: {}", e);
+            return Err(e.into());
+        }
+    };
 
-    let mut game_server = GameServer::new(
+    let game_listener = match TcpListener::bind(format!("{}:{}", listen_ip, game_port)).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            log::error!(
+                "Failed to bind game server to {}:{}: {}",
+                listen_ip,
+                game_port,
+                e
+            );
+            return Err(e.into());
+        }
+    };
+
+    let mut game_server = match GameServer::new(
         String::from("GameServer"),
         world_server.get_entity(),
-        TcpListener::bind(format!("{}:{}", listen_ip, game_port))
-            .await
-            .unwrap(),
+        game_listener,
         game_protocol,
         game_control_tx.clone(),
     )
     .await
-    .unwrap();
+    {
+        Ok(server) => server,
+        Err(e) => {
+            log::error!("Failed to initialize game server: {}", e);
+            return Err(e.into());
+        }
+    };
 
     tokio::spawn(async move {
         game_server.run().await;
@@ -292,16 +388,29 @@ async fn async_main() {
 
     // Wait for game world thread to finish
     let _ = game_world_thread.join();
+    
+    Ok(())
 }
 
-fn main() {
-    let rt = Builder::new_multi_thread()
+fn main() -> ExitCode {
+    let rt = match Builder::new_multi_thread()
         .worker_threads(4)
         .enable_all()
         .build()
-        .unwrap();
+    {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("Failed to create tokio runtime: {}", e);
+            return ExitCode::from(1);
+        }
+    };
 
-    rt.block_on(async {
-        async_main().await;
-    });
+    if let Err(e) = rt.block_on(async {
+        async_main().await
+    }) {
+        log::error!("Server initialization failed: {}", e);
+        return ExitCode::from(1);
+    }
+    
+    ExitCode::SUCCESS
 }

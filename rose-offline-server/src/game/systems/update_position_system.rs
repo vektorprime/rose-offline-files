@@ -1,6 +1,6 @@
 use bevy::{
     ecs::prelude::{Entity, Query, Res, ResMut},
-    math::Vec3Swizzles,
+    math::{Vec3, Vec3Swizzles},
     time::Time,
 };
 
@@ -33,14 +33,18 @@ pub fn update_position_system(
             let old_position = position.position;
             
             if distance_squared == 0.0 {
-                position.position = destination;
+                // Preserve Z coordinate when setting position to destination
+                position.position = Vec3::new(destination.x, destination.y, destination.z);
             } else {
                 let move_vector = direction.normalize() * move_speed.speed * time.delta_secs();
                 if move_vector.length_squared() >= distance_squared {
-                    position.position = destination;
+                    // Preserve Z coordinate when reaching destination
+                    position.position = Vec3::new(destination.x, destination.y, destination.z);
                 } else {
+                    // Only update X and Y, preserve Z coordinate
                     position.position.x += move_vector.x;
                     position.position.y += move_vector.y;
+                    // Z is preserved - no change needed
                 }
             }
 

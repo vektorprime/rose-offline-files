@@ -67,7 +67,8 @@ pub async fn create_bot(
     };
     state.register_bot_full(
         bot_id,
-        bevy::prelude::Entity::from_raw(0),
+        bevy::prelude::Entity::from_raw_u32(0)
+            .unwrap_or(bevy::prelude::Entity::PLACEHOLDER),
         request.name.clone(),
         assigned_player,
         level,
@@ -257,8 +258,8 @@ pub async fn get_bot_status(
                         level: bot.level,
                         job: class.clone(),
                         health: bot.health,
-                        mana: VitalPoints::new(100, 100), // TODO: Get actual mana
-                        stamina: VitalPoints::new(100, 100), // TODO: Get actual stamina
+                        mana: bot.mana,
+                        stamina: bot.stamina,
                         position: bot.position,
                         current_command: bot.status.clone(),
                         assigned_player: bot.assigned_player,
@@ -1021,11 +1022,22 @@ pub async fn get_bot_context(
             position: Position::new(0.0, 0.0, 0.0),
             zone: "Unknown".to_string(),
         },
-        assigned_player: assigned_player.map(|name| AssignedPlayerInfo {
-            name,
-            distance: 0.0, // TODO: Get from game world
-            health_percent: 100,
-            is_in_combat: false,
+        assigned_player: assigned_player.map(|name| {
+            let player_name = name.clone();
+            AssignedPlayerInfo {
+                name,
+                // Distance calculation requires GetBotContext to return bot position and player position
+                // For now, search nearby entities for the assigned player
+                distance: entities.iter()
+                    .find(|e| e.entity_type == NearbyEntityType::Player && e.name == player_name)
+                    .map(|e| e.distance)
+                    .unwrap_or(0.0),
+                health_percent: entities.iter()
+                    .find(|e| e.entity_type == NearbyEntityType::Player && e.name == player_name)
+                    .and_then(|e| e.health_percent)
+                    .unwrap_or(100),
+                is_in_combat: false,
+            }
         }),
         nearby_threats: threats,
         nearby_items: items,
@@ -1155,18 +1167,10 @@ pub async fn execute_llm_command(
         LlmActionType::Sit => LlmBotCommand::Sit { bot_id },
         LlmActionType::Stand => LlmBotCommand::Stand { bot_id },
         LlmActionType::AttackNearest => {
-            // TODO: Implement attack nearest logic
-            return Err((
-                StatusCode::NOT_IMPLEMENTED,
-                Json(ErrorResponse::new("attack_nearest not yet implemented", 501)),
-            ));
+            LlmBotCommand::AttackNearest { bot_id }
         }
         LlmActionType::PickupItems => {
-            // TODO: Implement pickup items logic
-            return Err((
-                StatusCode::NOT_IMPLEMENTED,
-                Json(ErrorResponse::new("pickup_items not yet implemented", 501)),
-            ));
+            LlmBotCommand::PickupNearestItem { bot_id }
         }
         LlmActionType::Wait => {
             // Wait is a no-op for now

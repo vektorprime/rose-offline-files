@@ -91,7 +91,7 @@ impl StatusEffects {
             id: status_effect_data.id,
             value: 0,
         });
-self.expire_times[status_effect_data.status_effect_type] =
+        self.expire_times[status_effect_data.status_effect_type] =
             Some(std::time::Instant::now() + Duration::from_secs(10000000));
         true
     }

@@ -16,7 +16,7 @@ id_wrapper_impl!(JobClassId, NonZeroU16, u16);
 
 pub struct JobClassData {
     pub id: JobClassId,
-    pub name: &'static str,
+    pub name: String,
     pub jobs: ArrayVec<JobId, 8>,
 }
 

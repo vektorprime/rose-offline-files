@@ -1,6 +1,6 @@
 use bevy::{
     ecs::query::QueryData,
-    prelude::{Commands, Entity, EventReader, Query, Res, ResMut, Vec3, With},
+    prelude::{Commands, Entity, MessageReader, Query, Res, ResMut, Vec3, With},
 };
 use rand::Rng;
 
@@ -34,7 +34,7 @@ pub struct ReviveEntityQuery<'w> {
 
 pub fn revive_event_system(
     mut commands: Commands,
-    mut events: EventReader<ReviveEvent>,
+    mut events: MessageReader<ReviveEvent>,
     query: Query<ReviveEntityQuery, With<Dead>>,
     game_data: Res<GameData>,
     mut client_entity_list: ResMut<ClientEntityList>,

@@ -17,6 +17,7 @@ members = [
     "rose-offline-tools/rose-conv",
     "rose-offline-tools/rose-vfs-dump",
     "rose-mcp-server",
+    "libs/big-brain",
 ]
 
 [workspace.dependencies]
@@ -24,8 +25,8 @@ aes = "0.8.1"
 anyhow = "1.0"
 arrayvec = "0.7"
 async-trait = "0.1"
-bevy = { version = "0.16", default-features = true }
-big-brain = { git = "https://github.com/zkat/big-brain.git", rev = "7d3911c15078db332b97a91886de02d8c9bdd9b4", features = [] }
+bevy = { version = "0.18.1", default-features = true }
+big-brain = { path = "libs/big-brain" }
 bitflags = "2.3"
 bitvec = { version = "1.0", features = ["serde"] }
 bytes = "1.1"
@@ -62,6 +63,7 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 parking_lot = "0.12"
+reqwest = { version = "0.12", features = ["json"] }
 
 [patch.crates-io]
 #bevy = { git = "https://github.com/exjam/bevy", rev = "b3b09ca110d42b406e7453ccda8394bc1b03440c" }

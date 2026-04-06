@@ -1,6 +1,5 @@
+use bevy::prelude::{Commands, MessageReader, Query, ResMut, MessageWriter};
 use bevy::ecs::{
-    event::EventWriter,
-    prelude::{Commands, EventReader, Query, ResMut},
     query::QueryData,
 };
 use log::{error, info};
@@ -48,9 +47,9 @@ pub fn save_system(
     mut commands: Commands,
     query: Query<SaveEntityQuery>,
     mut client_entity_list: ResMut<ClientEntityList>,
-    mut save_events: EventReader<SaveEvent>,
-    mut clan_events: EventWriter<ClanEvent>,
-    mut party_member_events: EventWriter<PartyMemberEvent>,
+    mut save_events: MessageReader<SaveEvent>,
+    mut clan_events: MessageWriter<ClanEvent>,
+    mut party_member_events: MessageWriter<PartyMemberEvent>,
 ) {
     for pending_save in save_events.read() {
         match *pending_save {
@@ -110,7 +109,7 @@ pub fn save_system(
                         }
 
                         if let Some(party_entity) = character.party_membership.party {
-                            party_member_events.send(PartyMemberEvent::Disconnect {
+                            party_member_events.write(PartyMemberEvent::Disconnect {
                                 party_entity,
                                 disconnect_entity: entity,
                                 character_id: character.character_info.unique_id,
@@ -119,7 +118,7 @@ pub fn save_system(
                         }
 
                         if let Some(&clan_entity) = character.clan_membership.as_ref() {
-                            clan_events.send(ClanEvent::MemberDisconnect {
+                            clan_events.write(ClanEvent::MemberDisconnect {
                                 clan_entity,
                                 disconnect_entity: entity,
                                 name: character.character_info.name.clone(),

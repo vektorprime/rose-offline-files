@@ -71,7 +71,9 @@ fn create_monster_spawn(
     let transform_spawn_list = |spawn_list: &Vec<IfoMonsterSpawn>| {
         spawn_list
             .iter()
-            .map(|&IfoMonsterSpawn { id, count }| (NpcId::new(id as u16).unwrap(), count as usize))
+            .filter_map(|&IfoMonsterSpawn { id, count }| {
+                NpcId::new(id as u16).map(|npc_id| (npc_id, count as usize))
+            })
             .collect()
     };
 
@@ -90,9 +92,9 @@ fn create_monster_spawn(
     }
 }
 
-fn create_npc_spawn(npc: &IfoNpc, object_offset: Vec3) -> ZoneNpcSpawn {
-    ZoneNpcSpawn {
-        npc_id: NpcId::new(npc.object.object_id as u16).unwrap(),
+fn create_npc_spawn(npc: &IfoNpc, object_offset: Vec3) -> Option<ZoneNpcSpawn> {
+    Some(ZoneNpcSpawn {
+        npc_id: NpcId::new(npc.object.object_id as u16)?,
         position: Vec3::new(
             npc.object.position.x,
             npc.object.position.y,
@@ -108,7 +110,7 @@ fn create_npc_spawn(npc: &IfoNpc, object_offset: Vec3) -> ZoneNpcSpawn {
         .2
         .to_degrees(),
         conversation: NpcConversationId::new(npc.quest_file_name.to_string()),
-    }
+    })
 }
 
 fn create_event_object(
@@ -201,7 +203,7 @@ fn load_zone(
                     ifo_file
                         .npcs
                         .iter()
-                        .map(|x| create_npc_spawn(x, objects_offset)),
+                        .filter_map(|x| create_npc_spawn(x, objects_offset)),
                 );
                 event_objects.extend(ifo_file.event_objects.iter().map(|event_object| {
                     create_event_object(
@@ -263,10 +265,10 @@ fn load_zone(
     let zone_strings = string_database.get_zone(data.get_zone_string_id(id).unwrap_or(""));
     let name = zone_strings
         .as_ref()
-        .map_or("", |x| unsafe { std::mem::transmute(x.name) });
+        .map_or(String::new(), |x| x.name.to_string());
     let description = zone_strings
         .as_ref()
-        .map_or("", |x| unsafe { std::mem::transmute(x.description) });
+        .map_or(String::new(), |x| x.description.to_string());
     debug!(
         "Loaded zone {} {} blocks: {}, spawns: {}, npcs: {}, sectors ({}, {}), start: {}",
         id,
@@ -279,7 +281,7 @@ fn load_zone(
         start_position.xy(),
     );
     Ok(ZoneData {
-        id: ZoneId::new(id as u16).unwrap(),
+        id: ZoneId::new(id as u16).ok_or(LoadZoneError::NotExists)?,
         name,
         description,
         sector_size,
@@ -319,6 +321,7 @@ fn load_zone(
             .get_zone_night_time(id)
             .unwrap_or((5 * WORLD_TICKS_PER_DAY / 6) as u32),
         skybox_id: data.get_zone_skybox_id(id),
+        planet: data.get_zone_planet(id).unwrap_or(0) as usize,
     })
 }
 
@@ -344,13 +347,13 @@ fn load_zone_list_entry(
     let zone_strings = string_database.get_zone(data.get_zone_string_id(id).unwrap_or(""));
 
     Ok(ZoneListEntry {
-        id: ZoneId::new(id as u16).unwrap(),
+        id: ZoneId::new(id as u16).ok_or(LoadZoneError::NotExists)?,
         name: zone_strings
             .as_ref()
-            .map_or("", |x| unsafe { std::mem::transmute(x.name) }),
+            .map_or(String::new(), |x| x.name.to_string()),
         description: zone_strings
             .as_ref()
-            .map_or("", |x| unsafe { std::mem::transmute(x.description) }),
+            .map_or(String::new(), |x| x.description.to_string()),
         minimap_path: data.get_zone_minimap_filename(id).map(VfsPathBuf::new),
         minimap_start_x: data.get_zone_minimap_start_x(id).unwrap_or(0),
         minimap_start_y: data.get_zone_minimap_start_y(id).unwrap_or(0),

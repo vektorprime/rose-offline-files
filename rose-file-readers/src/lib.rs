@@ -19,7 +19,7 @@ pub trait RoseFile {
         _writer: &mut RoseFileWriter,
         _options: &Self::WriteOptions,
     ) -> Result<(), anyhow::Error> {
-        unimplemented!();
+        Err(anyhow::anyhow!("Writing not implemented for this file type"))
     }
 }
 

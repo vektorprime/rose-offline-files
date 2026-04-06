@@ -2,7 +2,7 @@
 //!
 //! This module provides functions for creating LLM-controlled buddy bot entities.
 
-use bevy::ecs::prelude::*;
+use bevy::prelude::*;
 use uuid::Uuid;
 
 use crate::game::{
@@ -13,7 +13,7 @@ use crate::game::{
     },
     bundles::{client_entity_join_zone, CharacterBundle},
     components::{
-        CharacterInfo, ClientEntity, ClientEntityType, ClientEntityVisibility, Command,
+        AbilityValues, CharacterInfo, ClientEntity, ClientEntityType, ClientEntityVisibility, Command,
         DamageSources, EquipmentItemDatabase, HealthPoints, LlmBuddyBot, ManaPoints, MotionData,
         NextCommand, Position, Stamina, Team,
     },
@@ -498,7 +498,8 @@ pub fn process_llm_bot_creations_system(
     mut bot_manager: ResMut<LlmBotManagerResource>,
     mut client_entity_list: ResMut<ClientEntityList>,
     player_query: Query<(Entity, &Position, &CharacterInfo, &ClientEntity), Without<LlmBuddyBot>>,
-    mut party_events: EventWriter<PartyEvent>,
+    mut party_events: MessageWriter<PartyEvent>,
+    ability_values_query: Query<&AbilityValues, With<LlmBuddyBot>>,
 ) {
     // Note: Command receiving has been moved to process_llm_bot_commands_system
     // to avoid race conditions where this system consumes and drops non-CreateBot commands.
@@ -557,11 +558,12 @@ pub fn process_llm_bot_creations_system(
                 );
                 (
                     Entity::PLACEHOLDER,
-                    bevy::math::Vec3::new(520000.0, 520000.0, 0.0),
+                    bevy::math::Vec3::new(520000.0, 520000.0, 0.0), // Default Z=0 for fallback spawn
                     rose_data::ZoneId::new(1).unwrap_or_else(|| rose_data::ZoneId::new(2).unwrap()),
                     0u32,
                 )
             });
+            // Note: spawn_position includes Z from player position when player is found
 
             // Clone values before moving into config (needed for storage later)
             let name_for_storage = name.clone();
@@ -578,7 +580,7 @@ pub fn process_llm_bot_creations_system(
                 assigned_player_id,
                 zone_id,
                 position: spawn_position,
-                follow_distance: 300.0,
+                follow_distance: 50.0,  // Reduced from 300.0 to 50.0 for closer following
             };
 
             // Create the bot entity
@@ -631,8 +633,8 @@ pub fn process_llm_bot_creations_system(
                 }
             }
 
-            // Save bot to persistent storage
-            let bot_storage = LlmBuddyBotStorage::new(
+            // Save bot to persistent storage with actual max HP/MP values
+            let mut bot_storage = LlmBuddyBotStorage::new(
                 bot_id,
                 name_for_storage.clone(),
                 level,
@@ -645,6 +647,17 @@ pub fn process_llm_bot_creations_system(
                     z: spawn_position.z,
                 },
             );
+            // Update storage with actual max HP/MP from ability values
+            if let Ok(ability_values) = ability_values_query.get(entity) {
+                bot_storage.health = VitalPoints {
+                    current: ability_values.max_health,
+                    max: ability_values.max_health,
+                };
+                bot_storage.mana = VitalPoints {
+                    current: ability_values.max_mana,
+                    max: ability_values.max_mana,
+                };
+            }
             
             if let Err(e) = bot_storage.save() {
                 log::error!("Failed to save LLM buddy bot '{}' to storage: {:?}", name_for_storage, e);
@@ -662,7 +675,7 @@ pub fn process_llm_bot_creations_system(
                     name_for_storage,
                     entity
                 );
-                party_events.send(PartyEvent::Invite {
+                party_events.write(PartyEvent::Invite {
                     owner_entity: player_entity,
                     invited_entity: entity,
                 });

@@ -1,10 +1,10 @@
-use bevy::{ecs::prelude::Entity, prelude::Event};
+use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
 
 use rose_data::Item;
 
 use crate::game::components::ItemSlot;
 
-#[derive(Event)]
+#[derive(Message)]
 pub enum UseItemEvent {
     Inventory {
         entity: Entity,

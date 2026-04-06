@@ -133,7 +133,7 @@ pub struct FollowRequest {
 
 #[allow(dead_code)]
 fn default_follow_distance() -> f32 {
-    300.0
+    50.0  // Reduced from 300.0 to 50.0 for better follow behavior
 }
 
 /// Attack request

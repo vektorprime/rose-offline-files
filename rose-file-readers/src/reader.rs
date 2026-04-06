@@ -177,22 +177,27 @@ impl<'a> RoseFileReader<'a> {
         }
     }
 
-    #[allow(clippy::uninit_vec)]
-    pub fn read_vec<T>(&mut self, elements: usize) -> Result<Vec<T>, ReadError> {
+    pub fn read_vec<T: Copy>(&mut self, elements: usize) -> Result<Vec<T>, ReadError> {
         let bytes_length = std::mem::size_of::<T>() * elements;
         if self.cursor.remaining() < bytes_length {
             Err(ReadError::UnexpectedEof)
+        } else if elements == 0 {
+            Ok(Vec::new())
         } else {
+            // Allocate Vec<T> directly to ensure proper alignment
             let mut result: Vec<T> = Vec::with_capacity(elements);
             unsafe {
                 result.set_len(elements);
-                self.cursor
-                    .read_exact(std::slice::from_raw_parts_mut(
-                        result.as_mut_ptr() as *mut u8,
-                        bytes_length,
-                    ))
-                    .map_err(|_| ReadError::UnexpectedEof)?
             }
+            
+            // Read bytes directly into the Vec<T>'s buffer
+            let bytes_slice = unsafe {
+                std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, bytes_length)
+            };
+            self.cursor
+                .read_exact(bytes_slice)
+                .map_err(|_| ReadError::UnexpectedEof)?;
+            
             Ok(result)
         }
     }

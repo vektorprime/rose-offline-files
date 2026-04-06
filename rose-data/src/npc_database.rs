@@ -44,7 +44,7 @@ pub enum NpcMotionAction {
 
 pub struct NpcData {
     pub id: NpcId,
-    pub name: &'static str,
+    pub name: String,
     pub walk_speed: i32,
     pub run_speed: i32,
     pub scale: f32,
@@ -98,7 +98,7 @@ pub struct NpcConversationData {
 }
 
 pub struct NpcStoreTabData {
-    pub name: &'static str,
+    pub name: String,
     pub items: HashMap<u16, ItemReference>,
 }
 

@@ -1,4 +1,4 @@
-use bevy::ecs::prelude::{Commands, EventWriter, Res, ResMut};
+use bevy::prelude::{Commands, MessageWriter, Res, ResMut};
 
 use crate::game::{
     components::{GameClient, LoginClient, ServerInfo, WorldClient},
@@ -12,7 +12,7 @@ pub fn control_server_system(
     channel: Res<ControlChannel>,
     mut login_tokens: ResMut<LoginTokens>,
     mut server_list: ResMut<ServerList>,
-    mut save_events: EventWriter<SaveEvent>,
+    mut save_events: MessageWriter<SaveEvent>,
 ) {
     while let Ok(message) = channel.control_rx.try_recv() {
         match message {
@@ -75,7 +75,7 @@ pub fn control_server_system(
                     }
 
                     // Let the save system handle despawning the entity
-                    save_events.send(SaveEvent::Character {
+                    save_events.write(SaveEvent::Character {
                         entity,
                         remove_after_save: true,
                     });

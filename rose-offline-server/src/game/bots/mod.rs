@@ -60,7 +60,7 @@ use bot_use_buff_skill::{
     action_use_buff_skill, score_should_use_buff_skill, ShouldUseBuffSkill, UseBuffSkill,
 };
 
-use bevy::{ecs::schedule::IntoScheduleConfigs, prelude::{Component, Entity, Plugin, PreUpdate, With, Without}};
+use bevy::{ecs::schedule::IntoScheduleConfigs, prelude::{Component, Entity, Plugin, PreUpdate, Update, With, Without}};
 use big_brain::{
     prelude::Highest,
     thinker::{Thinker, ThinkerBuilder},
@@ -85,7 +85,7 @@ pub struct BotPlugin;
 impl Plugin for BotPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         app.add_plugins(BigBrainPlugin::new(PreUpdate)).add_systems(
-            PreUpdate,
+            Update,
             (
                 (
                     action_accept_party_invite,

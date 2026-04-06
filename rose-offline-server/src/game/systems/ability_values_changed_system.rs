@@ -16,7 +16,7 @@ pub struct AbilityValuesChangedQuery<'w> {
 }
 
 pub fn ability_values_changed_system(
-    mut query: Query<AbilityValuesChangedQuery, Or<(Changed<AbilityValues>, Changed<MoveMode>)>>,
+    mut query: Query<AbilityValuesChangedQuery, Or::<(Changed<AbilityValues>, Changed<MoveMode>)>>,
 ) {
     for mut object in query.iter_mut() {
         // Update is_driving so vehicle stats are used correctly

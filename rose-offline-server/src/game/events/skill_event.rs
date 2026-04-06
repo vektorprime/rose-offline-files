@@ -1,5 +1,5 @@
 use bevy::math::Vec2;
-use bevy::{ecs::prelude::Entity, prelude::Event};
+use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
 use std::time::Instant;
 
 use rose_data::{Item, SkillId};
@@ -12,7 +12,7 @@ pub enum SkillEventTarget {
     Position(Vec2),
 }
 
-#[derive(Event, Clone)]
+#[derive(Message, Clone)]
 pub struct SkillEvent {
     pub caster_entity: Entity,
     pub when: Instant,

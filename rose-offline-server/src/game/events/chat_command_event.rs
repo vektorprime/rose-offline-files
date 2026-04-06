@@ -1,6 +1,6 @@
-use bevy::{ecs::prelude::Entity, prelude::Event};
+use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
 
-#[derive(Event)]
+#[derive(Message)]
 pub struct ChatCommandEvent {
     pub entity: Entity,
     pub command: String,

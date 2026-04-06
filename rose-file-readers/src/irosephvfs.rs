@@ -187,8 +187,8 @@ impl IrosePhVfsIndex {
 
 impl VirtualFilesystemDevice for IrosePhVfsIndex {
     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile, anyhow::Error> {
-        let path_str = vfs_path.path().to_str().unwrap();
-        let path_hash = FileNameHash::from(path_str).hash;
+        let path_str = vfs_path.path().to_string_lossy();
+        let path_hash = FileNameHash::from(&*path_str).hash;
 
         for storage in &self.storages {
             if let Some(entry) = storage.files.get(&path_hash) {
@@ -202,8 +202,8 @@ impl VirtualFilesystemDevice for IrosePhVfsIndex {
     }
 
     fn exists(&self, vfs_path: &VfsPath) -> bool {
-        let path_str = vfs_path.path().to_str().unwrap();
-        let path_hash = FileNameHash::from(path_str).hash;
+        let path_str = vfs_path.path().to_string_lossy();
+        let path_hash = FileNameHash::from(&*path_str).hash;
 
         for vfs in &self.storages {
             if vfs.files.get(&path_hash).is_some() {

@@ -7,10 +7,10 @@ pub use rose_file_readers::QsdTrigger as QuestTrigger;
 
 pub struct QuestData {
     pub id: usize,
-    pub name: &'static str,
-    pub description: &'static str,
-    pub start_message: &'static str,
-    pub end_message: &'static str,
+    pub name: String,
+    pub description: String,
+    pub start_message: String,
+    pub end_message: String,
     pub time_limit: Option<WorldTicks>,
 }
 

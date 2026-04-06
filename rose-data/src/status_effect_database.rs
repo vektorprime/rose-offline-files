@@ -105,10 +105,10 @@ pub enum StatusEffectClearedByType {
 #[derive(Debug)]
 pub struct StatusEffectData {
     pub id: StatusEffectId,
-    pub name: &'static str,
-    pub description: &'static str,
-    pub start_message: &'static str,
-    pub end_message: &'static str,
+    pub name: String,
+    pub description: String,
+    pub start_message: String,
+    pub end_message: String,
     pub status_effect_type: StatusEffectType,
     pub can_be_reapplied: bool,
     pub cleared_by_type: StatusEffectClearedByType,

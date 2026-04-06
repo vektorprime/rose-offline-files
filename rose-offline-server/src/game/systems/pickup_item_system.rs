@@ -1,6 +1,6 @@
 use bevy::{
+    prelude::{Commands, MessageReader, MessageWriter, Query, Res, ResMut},
     ecs::query::QueryData,
-    prelude::{Commands, EventReader, EventWriter, Query, Res, ResMut},
 };
 use rose_data::{ItemClass, ItemType};
 use rose_game_common::{
@@ -36,7 +36,7 @@ pub struct PickupItemQuery<'w> {
 #[allow(clippy::unnecessary_unwrap)]
 pub fn pickup_item_system(
     mut commands: Commands,
-    mut pickup_item_events: EventReader<PickupItemEvent>,
+    mut pickup_item_events: MessageReader<PickupItemEvent>,
     mut query_pickup_item: Query<PickupItemQuery>,
     mut query_party: Query<&mut Party>,
     mut query_inventory: Query<(&mut Inventory, Option<&GameClient>)>,
@@ -45,7 +45,7 @@ pub fn pickup_item_system(
     query_party_membership: Query<&PartyMembership>,
     mut client_entity_list: ResMut<ClientEntityList>,
     game_data: Res<GameData>,
-    mut use_item_events: EventWriter<UseItemEvent>,
+    mut use_item_events: MessageWriter<UseItemEvent>,
 ) {
     for pickup_item_event in pickup_item_events.read() {
         let mut pickup_item =
@@ -175,7 +175,7 @@ pub fn pickup_item_system(
                                 matches!(item_data.item_data.class, ItemClass::AutomaticConsumption)
                             })
                     {
-                        use_item_events.send(UseItemEvent::from_item(pickup_entity, item));
+                        use_item_events.write(UseItemEvent::from_item(pickup_entity, item));
                     } else if let Ok((mut inventory, game_client)) =
                         query_inventory.get_mut(pickup_entity)
                     {

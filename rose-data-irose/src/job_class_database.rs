@@ -27,10 +27,10 @@ pub fn get_job_class_database(
         let name = stb
             .0
             .try_get(row, stb.0.columns() - 1)
-            .map(|key| string_database.get_job_class_name(key));
+            .map(|key| string_database.get_job_class_name(key).to_string());
         job_classes.push(Some(JobClassData {
             id: JobClassId::new(row as u16).unwrap(),
-            name: name.map_or("", |x| unsafe { std::mem::transmute(x) }),
+            name: name.unwrap_or_default(),
             jobs,
         }));
     }

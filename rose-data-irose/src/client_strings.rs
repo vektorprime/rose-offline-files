@@ -8,17 +8,14 @@ use rose_data::{ClientStrings, StringDatabase};
 pub fn get_client_strings(
     string_database: Arc<StringDatabase>,
 ) -> Result<Arc<ClientStrings>, anyhow::Error> {
-    let get_string = |id: u16| -> &'static str {
+    let get_string = |id: u16| -> String {
         let mut key = ArrayString::<16>::new();
         write!(&mut key, "{}", id).ok();
-        unsafe {
-            std::mem::transmute(
-                string_database
-                    .client_strings
-                    .get_text_string(string_database.language, &key)
-                    .unwrap_or(""),
-            )
-        }
+        string_database
+            .client_strings
+            .get_text_string(string_database.language, &key)
+            .unwrap_or("")
+            .to_string()
     };
 
     Ok(Arc::new(ClientStrings {

@@ -24,7 +24,7 @@ pub struct AbilityValuesChangedQuery<'w> {
 pub fn update_character_motion_data_system(
     mut query: Query<
         (&CharacterInfo, &Equipment, &MoveMode, &mut MotionData),
-        Or<(
+        Or::<(
             Changed<CharacterInfo>,
             Changed<Equipment>,
             Changed<MoveMode>,

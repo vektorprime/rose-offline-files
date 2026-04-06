@@ -160,10 +160,10 @@ impl TitanVfsIndex {
 
 impl VirtualFilesystemDevice for TitanVfsIndex {
     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile, anyhow::Error> {
-        let path_str = vfs_path.path().to_str().unwrap();
+        let path_str = vfs_path.path().to_string_lossy();
         let &(offset, size) = self
             .files
-            .get(&FileNameHash::from(path_str).hash)
+            .get(&FileNameHash::from(&*path_str).hash)
             .ok_or_else(|| VfsError::FileNotFound(vfs_path.path().into()))?;
 
         Ok(VfsFile::View(

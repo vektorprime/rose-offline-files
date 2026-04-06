@@ -68,6 +68,10 @@ pub struct BotSummaryData {
     pub level: u16,
     /// Health points
     pub health: crate::game::api::models::VitalPoints,
+    /// Mana points
+    pub mana: crate::game::api::models::VitalPoints,
+    /// Stamina points
+    pub stamina: crate::game::api::models::VitalPoints,
     /// Position in zone
     pub position: crate::game::api::models::ZonePosition,
     /// Assigned player
@@ -88,7 +92,7 @@ pub struct GetBotListResponse {
 }
 
 /// Commands that can be sent to control LLM buddy bots
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum LlmBotCommand {
     /// Create a new bot
     CreateBot {
@@ -190,6 +194,16 @@ pub enum LlmBotCommand {
         bot_id: Uuid,
         /// Item entity ID
         item_entity_id: u32,
+    },
+    /// Attack the nearest monster
+    AttackNearest {
+        /// Bot ID
+        bot_id: Uuid,
+    },
+    /// Pickup the nearest item
+    PickupNearestItem {
+        /// Bot ID
+        bot_id: Uuid,
     },
 
     /// Perform an emote
@@ -439,7 +453,7 @@ mod tests {
     fn test_register_and_get_bot() {
         let manager = LlmBotManager::new();
         let bot_id = Uuid::new_v4();
-        let entity = Entity::from_raw(42);
+        let entity = Entity::from(42);
 
         manager.register_bot(bot_id, "TestBot".to_string(), Some("Player1".to_string()));
         manager.register_bot_entity(bot_id, entity);
@@ -456,7 +470,7 @@ mod tests {
     fn test_unregister_bot() {
         let manager = LlmBotManager::new();
         let bot_id = Uuid::new_v4();
-        let entity = Entity::from_raw(42);
+        let entity = Entity::from(42);
 
         manager.register_bot(bot_id, "TestBot".to_string(), None);
         manager.register_bot_entity(bot_id, entity);

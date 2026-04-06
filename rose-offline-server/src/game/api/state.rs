@@ -29,7 +29,7 @@ impl BotInfo {
     /// Create a new BotInfo with placeholder entity
     pub fn new_placeholder(name: String, assigned_player: Option<String>) -> Self {
         Self {
-            entity: Entity::from_raw(0),
+            entity: Entity::from_raw_u32(0).unwrap(),
             name,
             assigned_player,
             level: 1,
@@ -182,7 +182,7 @@ mod tests {
         let bots_map = Arc::new(RwLock::new(HashMap::new()));
         let state = ApiState::new(tx, bots_map);
         let bot_id = Uuid::new_v4();
-        let entity = Entity::from_raw(42);
+        let entity = Entity::from(42);
 
         state.register_bot_full(
             bot_id,
@@ -214,8 +214,8 @@ mod tests {
         let bots_map = Arc::new(RwLock::new(HashMap::new()));
         let state = ApiState::new(tx, bots_map);
         let bot_id = Uuid::new_v4();
-        let initial_entity = Entity::from_raw(0);
-        let real_entity = Entity::from_raw(42);
+        let initial_entity = Entity::from(0);
+        let real_entity = Entity::from(42);
 
         state.register_bot(bot_id, "TestBot".to_string(), Some("Player1".to_string()));
         assert_eq!(state.get_bot_entity(&bot_id), Some(initial_entity));

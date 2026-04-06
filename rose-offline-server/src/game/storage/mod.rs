@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
-use directories::ProjectDirs;
 use lazy_static::lazy_static;
 
 lazy_static! {
     pub static ref LOCAL_STORAGE_DIR: PathBuf = {
-        let project = ProjectDirs::from("", "", "rose-offline").unwrap();
-        PathBuf::from(project.data_local_dir())
+        // Get the directory where the server executable is located
+        let exe_path = std::env::current_exe().expect("Failed to get current executable path");
+        let exe_dir = exe_path.parent().expect("Failed to get executable directory");
+        exe_dir.join("data")
     };
     pub static ref ACCOUNT_STORAGE_DIR: PathBuf = LOCAL_STORAGE_DIR.join("accounts");
     pub static ref BANK_STORAGE_DIR: PathBuf = LOCAL_STORAGE_DIR.join("bank");

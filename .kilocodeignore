@@ -14,8 +14,6 @@
 pkg/
 
 # Build output files
-build_output*.txt
-cargo_output*.txt
 cargo/
 
 # IDE/Editor directories
@@ -49,8 +47,7 @@ logs/
 *.d
 coverage/
 
-# Documentation
-doc/
+
 
 # Bevy cache
 bevy_cache/

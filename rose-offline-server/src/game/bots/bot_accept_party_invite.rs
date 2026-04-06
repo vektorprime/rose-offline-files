@@ -1,4 +1,4 @@
-use bevy::{ecs::query::QueryData, prelude::{Component, EventWriter, Query, With}};
+use bevy::{ecs::query::QueryData, prelude::{Component, MessageWriter, Query, With}};
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
 
 use crate::game::{components::PartyMembership, events::PartyEvent};
@@ -43,7 +43,7 @@ pub fn score_has_party_invite(
 pub fn action_accept_party_invite(
     mut query: Query<(&Actor, &mut ActionState), With<AcceptPartyInvite>>,
     query_bot: Query<BotQuery, BotQueryFilterAlive>,
-    mut party_events: EventWriter<PartyEvent>,
+    mut party_events: MessageWriter<PartyEvent>,
 ) {
     for (&Actor(bot_entity), mut state) in query.iter_mut() {
         let Ok(bot) = query_bot.get(bot_entity) else {
@@ -62,7 +62,7 @@ pub fn action_accept_party_invite(
                 }
 
                 if let Some(owner_entity) = bot.party_membership.pending_invites.get(0) {
-                    party_events.send(PartyEvent::AcceptInvite {
+                    party_events.write(PartyEvent::AcceptInvite {
                         owner_entity: *owner_entity,
                         invited_entity: bot_entity,
                     });

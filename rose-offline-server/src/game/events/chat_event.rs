@@ -1,8 +1,8 @@
-use bevy::prelude::{Entity, Event};
+use bevy::prelude::{Entity, Event, Message};
 use rose_data::ZoneId;
 use crate::game::components::ChatType;
 
-#[derive(Event, Debug, Clone)]
+#[derive(Message, Debug, Clone)]
 pub struct ChatMessageEvent {
     pub sender_entity: Entity,
     pub sender_name: String,

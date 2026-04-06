@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use bevy::{ecs::query::QueryData, prelude::{Commands, Entity, EventWriter, Query, Res, ResMut}, math::{Vec3, Vec3Swizzles}, time::Time};
+use bevy::{ecs::query::QueryData, prelude::{Commands, Entity, MessageWriter, Query, Res, ResMut}, math::{Vec3, Vec3Swizzles}, time::Time};
 
 use rose_data::{
     AbilityType, AmmoIndex, EquipmentIndex, ItemClass, SkillActionMode, SkillCooldown, SkillId, SkillTargetFilter, SkillType, VehiclePartIndex,
@@ -111,11 +111,6 @@ fn is_valid_attack_target(
 ) -> bool {
     if target.team.id == team.id {
         return false;
-    }
-
-    // Buddy bots can attack monsters
-    if team.id == Team::DEFAULT_CHARACTER_TEAM_ID && target.team.id == Team::DEFAULT_MONSTER_TEAM_ID {
-        return true;
     }
 
     if target.position.zone_id != position.zone_id {
@@ -464,11 +459,11 @@ pub fn command_system(
     )>,
     game_data: Res<GameData>,
     time: Res<Time>,
-    mut damage_events: EventWriter<DamageEvent>,
-    mut skill_events: EventWriter<SkillEvent>,
-    mut pickup_item_event: EventWriter<PickupItemEvent>,
-    mut item_life_event: EventWriter<ItemLifeEvent>,
-    mut use_ammo_event: EventWriter<UseAmmoEvent>,
+    mut damage_events: MessageWriter<DamageEvent>,
+    mut skill_events: MessageWriter<SkillEvent>,
+    mut pickup_item_event: MessageWriter<PickupItemEvent>,
+    mut item_life_event: MessageWriter<ItemLifeEvent>,
+    mut use_ammo_event: MessageWriter<UseAmmoEvent>,
     mut server_messages: ResMut<ServerMessages>,
 ) {
     let now = Instant::now();
@@ -916,7 +911,7 @@ pub fn command_system(
                         is_valid_pickup_target(&target, command_entity.position)
                     })
                 {
-                    pickup_item_event.send(PickupItemEvent {
+                    pickup_item_event.write(PickupItemEvent {
                         pickup_entity: command_entity.entity,
                         item_entity: target_entity,
                     });
@@ -945,16 +940,10 @@ pub fn command_system(
                     command_entity.client_entity.id
                 );
 
-                let Some(target) = query_attack_target
-                    .get(target_entity)
-                    .ok()
-                    .filter(|target| {
-                        is_valid_attack_target(target, command_entity.position, command_entity.team)
-                    })
-                else {
+                let Some(target) = query_attack_target.get(target_entity).ok() else {
                     // Cannot attack target, cancel command.
                     log::warn!(
-                        "[COMBAT_DEBUG] Attack target invalid: entity={:?}, target={:?}",
+                        "[COMBAT_DEBUG] Attack target missing required components: entity={:?}, target={:?}",
                         command_entity.entity,
                         target_entity
                     );
@@ -967,6 +956,28 @@ pub fn command_system(
                     *command_entity.next_command = NextCommand::default();
                     continue;
                 };
+
+                if !is_valid_attack_target(&target, command_entity.position, command_entity.team) {
+                    // Cannot attack target, cancel command.
+                    log::warn!(
+                        "[COMBAT_DEBUG] Attack target failed validation: attacker={:?}, target={:?}, attacker_team={}, target_team={}, attacker_zone={:?}, target_zone={:?}, target_hp={}",
+                        command_entity.entity,
+                        target_entity,
+                        command_entity.team.id,
+                        target.team.id,
+                        command_entity.position.zone_id,
+                        target.position.zone_id,
+                        target.health_points.hp
+                    );
+                    command_stop(
+                        &mut command_entity.command,
+                        command_entity.client_entity,
+                        command_entity.position,
+                        Some(&mut server_messages),
+                    );
+                    *command_entity.next_command = NextCommand::default();
+                    continue;
+                }
 
                 let attack_range = command_entity.ability_values.get_attack_range() as f32;
                 let distance = command_entity
@@ -1011,6 +1022,11 @@ pub fn command_system(
                 }
 
                 let mut cancel_attack = false;
+                let mut cancel_no_attack_motion = false;
+                let mut cancel_broken_vehicle_engine = false;
+                let mut cancel_broken_vehicle_arms = false;
+                let mut cancel_broken_weapon = false;
+                let mut cancel_not_enough_ammo = false;
 
                 let (attack_duration, hit_count) =
                     if let Some(attack_motion) = command_entity.motion_data.get_attack() {
@@ -1024,6 +1040,7 @@ pub fn command_system(
                         // No attack animation, cancel attack
                         log::warn!("[COMBAT_DEBUG] No attack motion found, cancelling attack!");
                         cancel_attack = true;
+                        cancel_no_attack_motion = true;
                         (Duration::ZERO, 0)
                     };
 
@@ -1035,6 +1052,7 @@ pub fn command_system(
                         {
                             // Vehicle engine is broken, cancel attack
                             cancel_attack = true;
+                            cancel_broken_vehicle_engine = true;
                         }
 
                         if equipment
@@ -1043,6 +1061,7 @@ pub fn command_system(
                         {
                             // Vehicle weapon item is broken, cancel attack
                             cancel_attack = true;
+                            cancel_broken_vehicle_arms = true;
                         }
                     }
                 } else {
@@ -1053,6 +1072,7 @@ pub fn command_system(
                         {
                             // Weapon item is broken, cancel attack
                             cancel_attack = true;
+                            cancel_broken_weapon = true;
                         }
                     }
 
@@ -1074,7 +1094,7 @@ pub fn command_system(
                                             ammo_item.quantity >= hit_count as u32
                                         })
                                     {
-                                        use_ammo_event.send(UseAmmoEvent {
+                                        use_ammo_event.write(UseAmmoEvent {
                                             entity: command_entity.entity,
                                             ammo_index,
                                             quantity: hit_count,
@@ -1082,6 +1102,7 @@ pub fn command_system(
                                     } else {
                                         // Not enough ammo, cancel attack
                                         cancel_attack = true;
+                                        cancel_not_enough_ammo = true;
                                     }
                                 }
                             }
@@ -1091,7 +1112,17 @@ pub fn command_system(
 
                 if cancel_attack {
                     // Attack requirements not met, cancel attack
-                    log::warn!("[COMBAT_DEBUG] Attack cancelled due to requirements not met");
+                    log::warn!(
+                        "[COMBAT_DEBUG] Attack cancelled: entity={:?}, target={:?}, no_attack_motion={}, broken_vehicle_engine={}, broken_vehicle_arms={}, broken_weapon={}, not_enough_ammo={}, hit_count={}",
+                        command_entity.entity,
+                        target_entity,
+                        cancel_no_attack_motion,
+                        cancel_broken_vehicle_engine,
+                        cancel_broken_vehicle_arms,
+                        cancel_broken_weapon,
+                        cancel_not_enough_ammo,
+                        hit_count,
+                    );
                     command_stop(
                         &mut command_entity.command,
                         command_entity.client_entity,
@@ -1104,7 +1135,7 @@ pub fn command_system(
 
                 if matches!(command_entity.move_mode, MoveMode::Drive) {
                     // Decrease vehicle engine item life on attack
-                    item_life_event.send(ItemLifeEvent::DecreaseVehicleEngineLife {
+                    item_life_event.write(ItemLifeEvent::DecreaseVehicleEngineLife {
                         entity: command_entity.entity,
                         amount: None,
                     });
@@ -1112,7 +1143,7 @@ pub fn command_system(
 
                 // Decrease weapon item life on attack
                 if command_entity.character_info.is_some() {
-                    item_life_event.send(ItemLifeEvent::DecreaseWeaponLife {
+                    item_life_event.write(ItemLifeEvent::DecreaseWeaponLife {
                         entity: command_entity.entity,
                     });
                 }
@@ -1137,7 +1168,7 @@ pub fn command_system(
                 );
 
                 // Send damage event to damage system
-                damage_events.send(DamageEvent::Attack {
+                damage_events.write(DamageEvent::Attack {
                     attacker: command_entity.entity,
                     defender: target_entity,
                     damage,
@@ -1295,6 +1326,7 @@ pub fn command_system(
                         (Some(target_position.position), Some(target_entity))
                     }
                     Some(CommandCastSkillTarget::Position(target_position)) => (
+                        // Note: Vec2 position for skills is ground-targeted, Z=0 is intentional
                         Some(Vec3::new(target_position.x, target_position.y, 0.0)),
                         None,
                     ),
@@ -1371,7 +1403,7 @@ pub fn command_system(
                 }
 
                 // Send skill event for effect to be applied after casting motion
-                skill_events.send(SkillEvent::new(
+                skill_events.write(SkillEvent::new(
                     command_entity.entity,
                     now + casting_duration,
                     skill_id,
@@ -1418,6 +1450,11 @@ pub fn command_system(
                     casting_duration,
                     action_duration,
                 );
+            }
+            CommandData::Sit => {
+                // Set current command to sit
+                *command_entity.command = Command::with_sitting(Duration::from_secs(0));
+                *command_entity.next_command = NextCommand::default();
             }
             _ => {}
         }

@@ -3,14 +3,14 @@ use std::time::{Duration, Instant};
 use bevy::{ecs::query::QueryData, prelude::Entity};
 use rose_data::{
     AbilityType, EquipmentIndex, SkillCooldown, SkillData, SkillTargetFilter, SkillType,
-    VehiclePartIndex,
+    StatusEffectType, VehiclePartIndex,
 };
 
 use crate::game::{
     components::{
         AbilityValues, ClanMembership, ClientEntity, ClientEntityType, Cooldowns, Equipment,
-        ExperiencePoints, HealthPoints, Inventory, ManaPoints, MoveMode, PartyMembership, Stamina,
-        Team,
+        ExperiencePoints, HealthPoints, Inventory, LlmBuddyBot, ManaPoints, MoveMode, PartyMembership, Stamina,
+        StatusEffects, SummonPoints, Team, Weight,
     },
     GameData,
 };
@@ -32,9 +32,13 @@ pub struct SkillCasterBundle<'w> {
     pub equipment: Option<&'w Equipment>,
     pub experience_points: Option<&'w ExperiencePoints>,
     pub inventory: Option<&'w Inventory>, // Only for Money
+    pub llm_buddy_bot: Option<&'w LlmBuddyBot>,
     pub mana_points: Option<&'w ManaPoints>,
     pub party_membership: Option<&'w PartyMembership>,
     pub stamina: Option<&'w Stamina>,
+    pub status_effects: Option<&'w StatusEffects>,
+    pub summon_points: Option<&'w SummonPoints>,
+    pub weight: Option<&'w Weight>,
 }
 
 #[derive(QueryData)]
@@ -88,21 +92,47 @@ fn check_skill_cooldown(
     true
 }
 
-fn check_not_disabled(_skill_caster: &SkillCasterBundleItem) -> bool {
-    // TODO: Check not muted / sleep / fainted / stunned
-    true
+fn check_not_disabled(skill_caster: &SkillCasterBundleItem) -> bool {
+    // Check if the caster is disabled by status effects (stun, sleep, faint, mute)
+    let Some(status_effects) = skill_caster.status_effects else {
+        // No status effects component means not disabled
+        return true;
+    };
+
+    // These status effects prevent skill usage:
+    // - Sleep: Character is asleep and cannot act
+    // - Fainting: Character has fainted and cannot act
+    // - Dumb (Mute/Silence): Character cannot use skills
+    let is_disabled = status_effects.active[StatusEffectType::Sleep].is_some()
+        || status_effects.active[StatusEffectType::Fainting].is_some()
+        || status_effects.active[StatusEffectType::Dumb].is_some();
+
+    !is_disabled
 }
 
-fn check_weight(_skill_caster: &SkillCasterBundleItem) -> bool {
-    // TODO: Check weight not too heavy to use skills (110%)
-    true
+fn check_weight(skill_caster: &SkillCasterBundleItem) -> bool {
+    // Check if entity is over 110% weight capacity
+    // At 110%+ weight, skills cannot be used
+    let Some(weight) = skill_caster.weight else {
+        // No weight component means no weight restriction
+        return true;
+    };
+
+    let max_weight = skill_caster.ability_values.max_weight;
+
+    // Allow skills if at or below 110% capacity
+    // weight.weight is u32, max_weight is i32 - need to compare carefully
+    let current_weight = weight.weight as f32;
+    let weight_limit = max_weight as f32 * 1.1;
+
+    current_weight <= weight_limit
 }
 
 fn check_move_mode(skill_caster: &SkillCasterBundleItem, _skill_data: &SkillData) -> bool {
     !matches!(skill_caster.move_mode, MoveMode::Drive)
 }
 
-fn check_skill_target_filter(
+pub fn check_skill_target_filter(
     skill_caster: &SkillCasterBundleItem,
     skill_target: &SkillTargetBundleItem,
     skill_data: &SkillData,
@@ -191,7 +221,7 @@ fn check_skill_target_filter(
 
 fn check_summon_points(
     game_data: &GameData,
-    _skill_caster: &SkillCasterBundleItem,
+    skill_caster: &SkillCasterBundleItem,
     skill_data: &SkillData,
 ) -> bool {
     if matches!(skill_data.skill_type, SkillType::SummonPet) {
@@ -199,8 +229,17 @@ fn check_summon_points(
             .summon_npc_id
             .and_then(|npc_id| game_data.npcs.get_npc(npc_id))
             .map_or(0, |npc_data| npc_data.summon_point_requirement);
+
         if summon_point_requirement > 0 {
-            // TODO: check_summon_points
+            // Check if caster has enough summon points
+            let available_points = skill_caster
+                .summon_points
+                .map_or(0, |sp| sp.points);
+
+            // Return false if not enough summon points
+            if available_points < summon_point_requirement as u32 {
+                return false;
+            }
         }
     }
 
@@ -208,8 +247,15 @@ fn check_summon_points(
 }
 
 fn check_use_ability_value(skill_caster: &SkillCasterBundleItem, skill_data: &SkillData) -> bool {
+    // Bots have unlimited mana - skip mana checks for LLM buddy bots
+    let is_bot = skill_caster.llm_buddy_bot.is_some();
+    
     for &(use_ability_type, mut use_ability_value) in skill_data.use_ability.iter() {
         if use_ability_type == AbilityType::Mana {
+            // Bots have unlimited mana
+            if is_bot {
+                continue;
+            }
             let use_mana_rate = (100 - skill_caster.ability_values.get_save_mana()) as f32 / 100.0;
             use_ability_value = (use_ability_value as f32 * use_mana_rate) as i32;
         }
@@ -228,7 +274,9 @@ fn check_use_ability_value(skill_caster: &SkillCasterBundleItem, skill_data: &Sk
                 .map_or(0, |mana_points: &ManaPoints| mana_points.mp),
             AbilityType::Experience => skill_caster
                 .experience_points
-                .map_or(0, |experience_points: &ExperiencePoints| experience_points.xp)
+                .map_or(0, |experience_points: &ExperiencePoints| {
+                    experience_points.xp
+                })
                 .try_into()
                 .unwrap_or(i32::MAX),
             AbilityType::Money => skill_caster
@@ -299,10 +347,10 @@ fn check_equipment(
     false
 }
 
-pub fn skill_can_use<'a>(
+pub fn skill_can_use(
     now: Instant,
     game_data: &GameData,
-    skill_caster: &'a SkillCasterBundleItem<'a, 'a>,
+    skill_caster: &SkillCasterBundleItem,
     skill_data: &SkillData,
 ) -> bool {
     if !skill_caster.client_entity.is_character() {
@@ -341,9 +389,9 @@ pub fn skill_can_use<'a>(
     true
 }
 
-pub fn skill_can_target_entity<'a>(
-    skill_caster: &'a SkillCasterBundleItem<'a, 'a>,
-    skill_target: &'a SkillTargetBundleItem<'a, 'a>,
+pub fn skill_can_target_entity(
+    skill_caster: &SkillCasterBundleItem,
+    skill_target: &SkillTargetBundleItem,
     skill_data: &SkillData,
 ) -> bool {
     if !check_skill_target_filter(skill_caster, skill_target, skill_data) {
@@ -353,10 +401,13 @@ pub fn skill_can_target_entity<'a>(
     true
 }
 
-pub fn skill_can_target_self<'a>(skill_caster: &'a SkillCasterBundleItem<'a, 'a>, skill_data: &SkillData) -> bool {
+pub fn skill_can_target_self(
+    skill_caster: &SkillCasterBundleItem,
+    skill_data: &SkillData,
+) -> bool {
     if !check_skill_target_filter(
         skill_caster,
-        &SkillTargetBundleItem::<'a, 'a> {
+        &SkillTargetBundleItem {
             entity: skill_caster.entity,
             client_entity: skill_caster.client_entity,
             health_points: skill_caster.health_points,
@@ -400,7 +451,9 @@ pub fn skill_use_ability_value(
                 .map_or(0, |mana_points: &ManaPoints| mana_points.mp),
             AbilityType::Experience => skill_caster
                 .experience_points
-                .map_or(0, |experience_points: &ExperiencePoints| experience_points.xp)
+                .map_or(0, |experience_points: &ExperiencePoints| {
+                    experience_points.xp
+                })
                 .try_into()
                 .unwrap_or(i32::MAX),
             AbilityType::Money => skill_caster

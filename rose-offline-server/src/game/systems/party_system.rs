@@ -1,5 +1,5 @@
 use bevy::ecs::{
-    prelude::{Changed, Commands, Entity, EventReader, Or, Query},
+    prelude::{Changed, Commands, Entity, MessageReader, Or, Query},
     query::QueryData,
 };
 use rose_game_common::{
@@ -789,7 +789,7 @@ pub fn party_member_event_system(
     mut party_query: Query<&mut Party>,
     mut party_membership_query: Query<PartyMembershipQuery>,
     party_member_info_query: Query<PartyMemberInfoQuery>,
-    mut party_member_events: EventReader<PartyMemberEvent>,
+    mut party_member_events: MessageReader<PartyMemberEvent>,
 ) {
     for event in party_member_events.read() {
         match event {
@@ -836,7 +836,7 @@ pub fn party_system(
     mut party_query: Query<&mut Party>,
     mut party_membership_query: Query<PartyMembershipQuery>,
     party_member_info_query: Query<PartyMemberInfoQuery>,
-    mut party_events: EventReader<PartyEvent>,
+    mut party_events: MessageReader<PartyEvent>,
 ) {
     for event in party_events.read() {
         match *event {
@@ -934,7 +934,7 @@ pub fn party_member_update_info_system(
     party_member_info_query: Query<PartyMemberInfoQuery>,
     party_member_info_changed_query: Query<
         (Entity, &PartyMembership),
-        Or<(
+        Or::<(
             Changed<AbilityValues>,
             Changed<ClientEntity>,
             Changed<StatusEffects>,

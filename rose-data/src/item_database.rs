@@ -324,8 +324,8 @@ impl ItemClass {
 #[derive(Debug)]
 pub struct BaseItemData {
     pub id: ItemReference,
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: String,
+    pub description: String,
     pub class: ItemClass,
     pub base_price: u32,
     pub price_rate: u32,

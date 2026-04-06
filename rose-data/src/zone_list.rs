@@ -6,8 +6,8 @@ use crate::{SkyboxId, StringDatabase, ZoneId};
 
 pub struct ZoneListEntry {
     pub id: ZoneId,
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: String,
+    pub description: String,
     pub minimap_path: Option<VfsPathBuf>,
     pub minimap_start_x: u32,
     pub minimap_start_y: u32,

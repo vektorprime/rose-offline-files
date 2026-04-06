@@ -68,7 +68,7 @@ impl<'a> Connection<'a> {
                 let size = self.buffer.get_u16_le() as usize;
                 let command = self.buffer.get_u16_le();
 
-                if size < 6 {
+                if size < 6 || size > read_length {
                     return Err(ConnectionError::DecryptBodyFailed.into());
                 }
 

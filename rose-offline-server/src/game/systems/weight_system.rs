@@ -9,7 +9,7 @@ pub fn weight_system(
     mut commands: Commands,
     calculate_weight_query: Query<
         (Entity, &Inventory, &Equipment),
-        Or<(Changed<Inventory>, Changed<Equipment>)>,
+        Or::<(Changed<Inventory>, Changed<Equipment>)>,
     >,
     game_data: Res<GameData>,
 ) {

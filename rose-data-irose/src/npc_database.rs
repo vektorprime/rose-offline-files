@@ -167,14 +167,18 @@ pub fn get_npc_database(
         }
 
         let name = if let Some(entry) = npc_string_id.and_then(|key| string_database.get_npc(key)) {
-            unsafe { std::mem::transmute(entry.text) }
+            entry.text.to_string()
         } else {
-            ""
+            String::new()
         };
 
         npc_count += 1;
+        let npc_id = match NpcId::new(id as u16) {
+            Some(npc_id) => npc_id,
+            None => continue,
+        };
         npcs.push(Some(NpcData {
-            id: NpcId::new(id as u16).unwrap(),
+            id: npc_id,
             name,
             walk_speed: data.get_walk_speed(id).unwrap_or(0),
             run_speed: data.get_run_speed(id).unwrap_or(0),
@@ -256,15 +260,17 @@ pub fn get_npc_database(
 
         if !items.is_empty() {
             let name = if let Some(entry) = string_database.get_npc_store_tab(data.get(id, 1)) {
-                unsafe { std::mem::transmute(entry.text) }
+                entry.text.to_string()
             } else {
-                ""
+                String::new()
             };
 
-            store_tabs.insert(
-                NpcStoreTabId::new(id as u16).unwrap(),
-                NpcStoreTabData { name, items },
-            );
+            if let Some(store_tab_id) = NpcStoreTabId::new(id as u16) {
+                store_tabs.insert(
+                    store_tab_id,
+                    NpcStoreTabData { name, items },
+                );
+            }
         }
     }
 

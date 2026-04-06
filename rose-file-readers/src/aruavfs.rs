@@ -254,10 +254,10 @@ const ZSC_IV: [u8; 16] = [
 
 impl VirtualFilesystemDevice for AruaVfsIndex {
     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile, anyhow::Error> {
-        let path_str = vfs_path.path().to_str().unwrap();
+        let path_str = vfs_path.path().to_string_lossy();
         let &(offset, size) = self
             .files
-            .get(&FileNameHash::from(path_str).hash)
+            .get(&FileNameHash::from(&*path_str).hash)
             .ok_or_else(|| VfsError::FileNotFound(vfs_path.path().into()))?;
         let file_data = &self.mmap[offset as usize..offset as usize + size as usize];
 
@@ -302,7 +302,7 @@ impl VirtualFilesystemDevice for AruaVfsIndex {
     }
 
     fn exists(&self, vfs_path: &VfsPath) -> bool {
-        let path_str = vfs_path.path().to_str().unwrap();
-        self.files.get(&FileNameHash::from(path_str).hash).is_some()
+        let path_str = vfs_path.path().to_string_lossy();
+        self.files.get(&FileNameHash::from(&*path_str).hash).is_some()
     }
 }

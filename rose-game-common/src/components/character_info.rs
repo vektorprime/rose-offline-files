@@ -28,4 +28,30 @@ pub struct CharacterInfo {
     pub revive_zone_id: ZoneId,
     pub revive_position: Vec3,
     pub unique_id: CharacterUniqueId,
+    /// Head size for appearance customization (default 100 as per C++ source)
+    #[serde(default = "default_head_size")]
+    pub head_size: i32,
+    /// Body size for appearance customization (default 100 as per C++ source)
+    #[serde(default = "default_body_size")]
+    pub body_size: i32,
+    /// PvP flag state (0 = off, non-zero = on)
+    #[serde(default)]
+    pub pvp_flag: i32,
+    /// Mana save percentage (0-100)
+    #[serde(default)]
+    pub save_mana: u8,
+    /// Drop rate percentage modifier
+    #[serde(default)]
+    pub drop_rate: i32,
+    /// Current planet ID
+    #[serde(default)]
+    pub current_planet: u32,
+}
+
+fn default_head_size() -> i32 {
+    100
+}
+
+fn default_body_size() -> i32 {
+    100
 }

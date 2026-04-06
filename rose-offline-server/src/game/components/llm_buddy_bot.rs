@@ -97,7 +97,7 @@ impl LlmBuddyBot {
             id,
             assigned_player_id,
             assigned_player_name,
-            follow_distance: 300.0,
+            follow_distance: 50.0,
             chat_messages: Vec::with_capacity(MAX_CHAT_MESSAGES),
             is_following: true,
             behavior_mode: BotBehaviorMode::Defensive,
@@ -171,7 +171,7 @@ mod tests {
         assert_eq!(bot.id, id);
         assert_eq!(bot.assigned_player_id, 12345);
         assert_eq!(bot.assigned_player_name, "TestPlayer");
-        assert_eq!(bot.follow_distance, 300.0);
+        assert_eq!(bot.follow_distance, 50.0);
         assert!(bot.chat_messages.is_empty());
         assert!(bot.is_following);
     }

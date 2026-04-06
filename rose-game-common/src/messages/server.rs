@@ -524,6 +524,14 @@ pub enum ServerMessage {
     UpdateMoney {
         money: Money,
     },
+    UpdateHealthPoints {
+        entity_id: ClientEntityId,
+        hp: i32,
+    },
+    UpdateManaPoints {
+        entity_id: ClientEntityId,
+        mp: i32,
+    },
     UpdateStatusEffects {
         entity_id: ClientEntityId,
         status_effects: ActiveStatusEffects,

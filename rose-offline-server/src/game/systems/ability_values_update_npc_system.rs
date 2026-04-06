@@ -18,7 +18,7 @@ pub struct AbilityValuesNpcQuery<'w> {
 }
 
 pub fn ability_values_update_npc_system(
-    mut query: Query<AbilityValuesNpcQuery, Or<(Changed<Npc>, Changed<StatusEffects>)>>,
+    mut query: Query<AbilityValuesNpcQuery, Or::<(Changed<Npc>, Changed<StatusEffects>)>>,
     game_data: Res<GameData>,
 ) {
     for mut npc in query.iter_mut() {

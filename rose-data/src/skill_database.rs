@@ -141,8 +141,8 @@ pub struct SkillCastingEffect {
 #[derive(Debug)]
 pub struct SkillData {
     pub id: SkillId,
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: String,
+    pub description: String,
 
     pub base_skill_id: Option<SkillId>,
     pub level: u32,
@@ -163,6 +163,7 @@ pub struct SkillData {
     pub action_mode: SkillActionMode,
     pub action_motion_id: Option<MotionId>,
     pub action_motion_speed: f32,
+    pub action_motion_hit_count: i32,
     pub add_ability: [Option<SkillAddAbility>; 2],
     pub basic_command: Option<SkillBasicCommand>,
     pub bullet_effect_id: Option<EffectId>,

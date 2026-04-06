@@ -110,7 +110,9 @@ pub fn restore_llm_buddy_bots_system(
             bot_storage.assigned_player.clone(),
         );
         llm_buddy_bot.set_follow_distance(bot_storage.follow_distance);
-        llm_buddy_bot.is_following = bot_storage.is_following;
+        // Always set is_following to true when restoring bot on server startup
+        // The player expects their bot to follow them after relogin
+        llm_buddy_bot.is_following = true;
 
         // Calculate ability values
         let ability_values = game_data.ability_value_calculator.calculate(
@@ -121,6 +123,10 @@ pub fn restore_llm_buddy_bots_system(
             &bot_data.skill_list,
             &StatusEffects::new(),
         );
+
+        // Capture max health and mana before moving ability_values into the bundle
+        let max_health = ability_values.max_health + ability_values.adjust.max_health;
+        let max_mana = ability_values.max_mana + ability_values.adjust.max_mana;
 
         // Calculate move speed
         let move_speed = MoveSpeed {
@@ -156,14 +162,14 @@ pub fn restore_llm_buddy_bots_system(
                     equipment: bot_data.equipment,
                     experience_points: bot_data.experience_points,
                     health_points: HealthPoints {
-                        hp: bot_storage.health.current,
+                        hp: max_health,
                     },
                     hotbar: bot_data.hotbar,
                     info: bot_data.info,
                     inventory: bot_data.inventory,
                     level: bot_data.level,
                     mana_points: ManaPoints {
-                        mp: bot_storage.mana.current,
+                        mp: max_mana,
                     },
                     motion_data,
                     move_mode: MoveMode::Run,

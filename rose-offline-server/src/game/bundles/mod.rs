@@ -2,6 +2,7 @@ mod ability_values;
 mod entity;
 mod skill_list;
 mod skill_use;
+mod skill_validation;
 
 pub use ability_values::{
     ability_values_add_value, ability_values_get_value, ability_values_set_value,
@@ -16,7 +17,7 @@ pub use skill_list::{
     SkillListBundle,
 };
 pub use skill_use::{
-    skill_can_target_entity, skill_can_target_position, skill_can_target_self, skill_can_use,
-    SkillCasterBundle, SkillCasterBundleItem, SkillTargetBundle, SkillTargetBundleItem,
-    GLOBAL_SKILL_COOLDOWN,
+    check_skill_target_filter, skill_can_target_entity, skill_can_target_position,
+    skill_can_target_self, skill_can_use, SkillCasterBundle, SkillCasterBundleItem,
+    SkillTargetBundle, SkillTargetBundleItem, GLOBAL_SKILL_COOLDOWN,
 };

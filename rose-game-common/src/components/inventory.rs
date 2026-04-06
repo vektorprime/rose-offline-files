@@ -402,4 +402,32 @@ impl Inventory {
             .chain(self.materials.slots.iter())
             .chain(self.vehicles.slots.iter())
     }
+
+    /// Calculates the total weight of all items in the inventory.
+    /// The weight_fn closure should return the weight for an item reference and quantity.
+    /// Signature: |item_reference: &ItemReference, quantity: u32| -> u32
+    pub fn calculate_total_weight<F>(&self, weight_fn: F) -> i32
+    where
+        F: Fn(&ItemReference, u32) -> u32,
+    {
+        self.iter()
+            .filter_map(|slot| slot.as_ref())
+            .map(|item| match item {
+                Item::Equipment(eq) => weight_fn(&eq.item, 1),
+                Item::Stackable(stack) => weight_fn(&stack.item, stack.quantity),
+            })
+            .sum::<u32>() as i32
+    }
+
+    /// Iterates over all items, yielding (ItemReference, quantity) tuples.
+    /// For equipment, quantity is always 1. For stackable items, it's the item's quantity.
+    pub fn iter_items(&self) -> impl Iterator<Item = (ItemReference, u32)> + '_ {
+        self.iter()
+            .filter_map(|slot| slot.as_ref())
+            .flat_map(move |item| match item {
+                Item::Equipment(eq) => Some(vec![(eq.item, 1)]).into_iter(),
+                Item::Stackable(stack) => Some(vec![(stack.item, stack.quantity)]).into_iter(),
+            })
+            .flatten()
+    }
 }

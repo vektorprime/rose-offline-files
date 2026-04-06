@@ -1,9 +1,9 @@
-use bevy::{ecs::prelude::Entity, prelude::Event};
+use bevy::prelude::{Entity, Event, Message};
 
 use rose_data::SkillId;
 use rose_game_common::data::Damage;
 
-#[derive(Event, Debug)]
+#[derive(Message, Debug)]
 pub enum DamageEvent {
     Attack {
         attacker: Entity,

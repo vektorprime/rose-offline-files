@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use bevy::{
     ecs::{
-        prelude::{Commands, Entity, EventReader, EventWriter, Local, Query, Res, ResMut},
+        prelude::{Commands, Entity, MessageReader, MessageWriter, Local, Query, Res, ResMut},
         query::QueryData,
         system::SystemParam,
     },
@@ -16,15 +16,16 @@ use rose_data::{
     AbilityType, SkillCooldown, SkillData, SkillTargetFilter, SkillType, StatusEffectClearedByType,
     StatusEffectType,
 };
-use std::time::Instant;
 use rose_game_common::{components::Money, data::Damage};
+use std::time::Instant;
 
 use crate::game::{
     bundles::{ability_values_get_value, MonsterBundle, GLOBAL_SKILL_COOLDOWN},
     components::{
-        AbilityValues, ClanMembership, ClientEntity, ClientEntityType, Cooldowns, Dead,
-        ExperiencePoints, GameClient, HealthPoints, Inventory, Level, ManaPoints, MoveMode,
-        MoveSpeed, PartyMembership, Position, SpawnOrigin, Stamina, StatusEffects, Team,
+        AbilityValues, ClanMembership, ClientEntity, ClientEntityType, Command, CommandData,
+        Cooldowns, Dead, ExperiencePoints, GameClient, HealthPoints, Inventory, Level, ManaPoints,
+        MoveMode, MoveSpeed, NextCommand, PartyMembership, Position, SpawnOrigin, Stamina,
+        StatusEffects, SummonPoints, Team,
     },
     events::{DamageEvent, ItemLifeEvent, SkillEvent, SkillEventTarget},
     messages::server::{CancelCastingSkillReason, ServerMessage},
@@ -42,8 +43,8 @@ enum SkillCastError {
 #[derive(SystemParam)]
 pub struct SkillSystemParameters<'w, 's> {
     server_messages: ResMut<'w, ServerMessages>,
-    damage_events: EventWriter<'w, DamageEvent>,
-    item_life_events: EventWriter<'w, ItemLifeEvent>,
+    damage_events: MessageWriter<'w, DamageEvent>,
+    item_life_events: MessageWriter<'w, ItemLifeEvent>,
     _marker: PhantomData<&'s ()>,
 }
 
@@ -73,6 +74,7 @@ pub struct SkillCasterQuery<'w> {
     experience_points: Option<&'w mut ExperiencePoints>,
     cooldowns: Option<&'w mut Cooldowns>,
     inventory: Option<&'w mut Inventory>,
+    summon_points: Option<&'w mut SummonPoints>,
 }
 
 #[derive(QueryData)]
@@ -95,9 +97,16 @@ pub struct SkillTargetQuery<'w> {
     mana_points: Option<&'w mut ManaPoints>,
     stamina: Option<&'w mut Stamina>,
     status_effects: &'w mut StatusEffects,
+
+    command: Option<&'w mut Command>,
+    next_command: Option<&'w mut NextCommand>,
 }
 
-// TODO: Deduplicate code with skill_use.rs check_skill_target_filter
+/// Check if the skill target filter allows targeting the specified entity.
+/// Note: This is a local implementation for SkillCasterQuery/SkillTargetQuery types.
+/// The `skill_use.rs` module has a similar function for SkillCasterBundle/SkillTargetBundle types.
+/// Full deduplication would require creating a shared trait or common data structure
+/// that both query types could be converted to.
 fn check_skill_target_filter(
     skill_caster: &SkillCasterQueryItem,
     skill_target: &SkillTargetQueryItem,
@@ -199,7 +208,7 @@ fn apply_skill_status_effects_to_entity(
     if skill_data.harm != 0 {
         skill_system_parameters
             .damage_events
-            .send(DamageEvent::Tagged {
+            .write(DamageEvent::Tagged {
                 attacker: skill_caster.entity,
                 defender: skill_target.entity,
             });
@@ -294,10 +303,28 @@ fn apply_skill_status_effects_to_entity(
 
             match status_effect_data.status_effect_type {
                 StatusEffectType::Fainting | StatusEffectType::Sleep => {
-                    // TODO: Set current + next command to stop
+                    if let Some(ref mut command) = skill_target.command {
+                        **command = Command::with_stop();
+                    }
+                    if let Some(ref mut next_command) = skill_target.next_command {
+                        next_command.command = Some(CommandData::Stop {
+                            send_message: false,
+                        });
+                        next_command.has_sent_server_message = false;
+                    }
                 }
                 StatusEffectType::Taunt => {
-                    // TODO: Set current + next command to attack spell cast entity
+                    if let Some(ref mut command) = skill_target.command {
+                        command.command = CommandData::Attack {
+                            target: skill_caster.entity,
+                        };
+                    }
+                    if let Some(ref mut next_command) = skill_target.next_command {
+                        next_command.command = Some(CommandData::Attack {
+                            target: skill_caster.entity,
+                        });
+                        next_command.has_sent_server_message = false;
+                    }
                 }
                 _ => {}
             }
@@ -439,7 +466,7 @@ fn apply_skill_damage_to_entity(
         return Err(SkillCastError::InvalidTarget);
     }
 
-    // TODO: Get hit count from skill action motion
+    let hit_count = skill_data.action_motion_hit_count.max(1);
     let damage = skill_system_resources
         .game_data
         .ability_value_calculator
@@ -447,12 +474,12 @@ fn apply_skill_damage_to_entity(
             skill_caster.ability_values,
             skill_target.ability_values,
             skill_data,
-            1,
+            hit_count,
         );
 
     skill_system_parameters
         .damage_events
-        .send(DamageEvent::Skill {
+        .write(DamageEvent::Skill {
             attacker: skill_caster.entity,
             defender: skill_target.entity,
             damage,
@@ -528,7 +555,7 @@ fn apply_skill_damage(
     if result.is_ok() && skill_data.damage_type != 3 {
         skill_system_parameters
             .item_life_events
-            .send(ItemLifeEvent::DecreaseWeaponLife {
+            .write(ItemLifeEvent::DecreaseWeaponLife {
                 entity: skill_caster.entity,
             });
     }
@@ -620,7 +647,7 @@ fn subtract_skill_use_cost(
                 }
             }
             AbilityType::Fuel => {
-                skill_system_parameters.item_life_events.send(
+                skill_system_parameters.item_life_events.write(
                     ItemLifeEvent::DecreaseVehicleEngineLife {
                         entity: skill_event.caster_entity,
                         amount: Some(use_ability_value.clamp(0, u16::MAX as i32) as u16),
@@ -639,7 +666,7 @@ pub fn skill_effect_system(
     mut skill_caster_query: Query<SkillCasterQuery>,
     mut skill_target_query: Query<SkillTargetQuery>,
     mut client_entity_list: ResMut<ClientEntityList>,
-    mut skill_events: EventReader<SkillEvent>,
+    mut skill_events: MessageReader<SkillEvent>,
     mut pending_skill_events: Local<Vec<SkillEvent>>,
 ) {
     for skill_event in skill_events.read() {
@@ -810,7 +837,13 @@ pub fn skill_effect_system(
                                 .get_npc(npc_id)
                                 .map_or(0, |npc_data| npc_data.summon_point_requirement);
                             if summon_point_requirement > 0 {
-                                // TODO: Update summon points
+                                if let Some(mut summon_points) = skill_caster.summon_points {
+                                    if !summon_points.try_spend(summon_point_requirement) {
+                                        result = Err(SkillCastError::NotEnoughUseAbility);
+                                    }
+                                } else {
+                                    result = Err(SkillCastError::NotEnoughUseAbility);
+                                }
                             }
 
                             Ok(())

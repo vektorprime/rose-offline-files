@@ -1,10 +1,10 @@
-use bevy::prelude::{Entity, Event};
+use bevy::prelude::{Entity, Message};
 
 use rose_data::Item;
 
 use crate::game::components::ItemSlot;
 
-#[derive(Event)]
+#[derive(Message)]
 pub enum BankEvent {
     Open {
         entity: Entity,

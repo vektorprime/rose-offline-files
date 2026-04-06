@@ -1,4 +1,4 @@
-use bevy::prelude::{EventReader, Query};
+use bevy::prelude::{MessageReader, Query};
 
 use rose_data::ItemSlotBehaviour;
 use rose_game_common::messages::server::ServerMessage;
@@ -9,7 +9,7 @@ use crate::game::{
 };
 
 pub fn bank_system(
-    mut bank_events: EventReader<BankEvent>,
+    mut bank_events: MessageReader<BankEvent>,
     mut query_entity: Query<(&GameClient, &mut Bank, &mut Inventory)>,
 ) {
     for event in bank_events.read() {

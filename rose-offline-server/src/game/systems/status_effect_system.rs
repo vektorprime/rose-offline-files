@@ -1,9 +1,5 @@
 use bevy::{
-    ecs::{
-        entity::Entity,
-        event::EventWriter,
-        prelude::{Query, Res, ResMut},
-    },
+    prelude::{Entity, Query, Res, ResMut, MessageWriter},
     time::Time,
 };
 use enum_map::EnumMap;
@@ -46,7 +42,7 @@ pub fn status_effect_system(
         &mut StatusEffects,
         &mut StatusEffectsRegen,
     )>,
-    mut damage_events: EventWriter<DamageEvent>,
+    mut damage_events: MessageWriter<DamageEvent>,
     mut server_messages: ResMut<ServerMessages>,
     game_data: Res<GameData>,
     time: Res<Time>,
@@ -76,23 +72,44 @@ pub fn status_effect_system(
             if let Some(status_effect) = status_effect_slot {
                 match status_effect_type {
                     StatusEffectType::IncreaseHp => {
+                        log::info!("[STATUS_EFFECT_SYSTEM] Processing IncreaseHp for entity {:?}, hp={}, status_effect={:?}", entity, health_points.hp, status_effect);
                         if let Some(status_effect_regen) =
                             &mut status_effects_regen.regens[status_effect_type]
                         {
+                            log::info!("[STATUS_EFFECT_SYSTEM] Regen found: total_value={}, value_per_second={}, applied_value={}, applied_duration={:?}",
+                                status_effect_regen.total_value, status_effect_regen.value_per_second, status_effect_regen.applied_value, status_effect_regen.applied_duration);
                             // Calculate regen for this tick
                             let regen = update_status_effect_regen(status_effect_regen, &time);
+                            log::info!("[STATUS_EFFECT_SYSTEM] Calculated regen: {}", regen);
 
                             // Update hp
                             let max_hp = ability_values.get_max_health();
+                            let old_hp = health_points.hp;
                             health_points.hp = i32::min(health_points.hp + regen, max_hp);
+                            log::info!("[STATUS_EFFECT_SYSTEM] HP changed from {} to {} (max_hp={})", old_hp, health_points.hp, max_hp);
+
+                            if regen != 0 {
+                                log::info!("[STATUS_EFFECT_SYSTEM] Sending UpdateHealthPoints: entity_id={:?}, hp={}", client_entity.id, health_points.hp);
+                                server_messages.send_entity_message(
+                                    client_entity,
+                                    ServerMessage::UpdateHealthPoints {
+                                        entity_id: client_entity.id,
+                                        hp: health_points.hp,
+                                    },
+                                );
+                            }
 
                             // Expire when reach max hp
                             if health_points.hp == max_hp {
+                                log::info!("[STATUS_EFFECT_SYSTEM] HP at max, marking as expired");
                                 expired_status_effects[status_effect_type] = true;
                             }
+                        } else {
+                            log::warn!("[STATUS_EFFECT_SYSTEM] IncreaseHp status effect active but no regen found!");
                         }
                     }
                     StatusEffectType::IncreaseMp => {
+                        log::info!("[STATUS_EFFECT_SYSTEM] Processing IncreaseMp for entity {:?}", entity);
                         if let Some(status_effect_regen) =
                             &mut status_effects_regen.regens[status_effect_type]
                         {
@@ -103,6 +120,16 @@ pub fn status_effect_system(
                                 // Update mp
                                 let max_mp = ability_values.get_max_mana();
                                 mana_points.mp = i32::min(mana_points.mp + regen, max_mp);
+
+                                if regen != 0 {
+                                    server_messages.send_entity_message(
+                                        client_entity,
+                                        ServerMessage::UpdateManaPoints {
+                                            entity_id: client_entity.id,
+                                            mp: mana_points.mp,
+                                        },
+                                    );
+                                }
 
                                 // Expire when reach max mp
                                 if mana_points.mp == max_mp {
@@ -130,7 +157,7 @@ pub fn status_effect_system(
                                     health_points.hp -= data.apply_per_second_value;
                                 } else {
                                     // Apply as damage so the entity dies
-                                    damage_events.send(DamageEvent::Attack {
+                                    damage_events.write(DamageEvent::Attack {
                                         attacker: entity,
                                         defender: entity,
                                         damage: Damage {

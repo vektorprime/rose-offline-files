@@ -115,8 +115,12 @@ pub struct StopBotParams {
 pub struct AttackTargetParams {
     /// UUID of the bot
     pub bot_id: String,
-    /// Entity ID of the target to attack
-    pub target_entity_id: u32,
+    /// Entity ID of the target to attack (optional if target_name is provided)
+    #[serde(default)]
+    pub target_entity_id: Option<u32>,
+    /// Name of the target monster to attack (optional if target_entity_id is provided)
+    #[serde(default)]
+    pub target_name: Option<String>,
 }
 
 /// Parameters for use_skill tool
@@ -128,9 +132,12 @@ pub struct UseSkillParams {
     pub skill_id: u16,
     /// Type of targeting: "entity", "position", or "self"
     pub target_type: String,
-    /// Target entity ID (required if target_type is "entity")
+    /// Target entity ID (optional if target_name is provided and target_type is "entity")
     #[serde(default)]
     pub target_entity_id: Option<u32>,
+    /// Target name for entity targeting (optional if target_entity_id is provided)
+    #[serde(default)]
+    pub target_name: Option<String>,
     /// Target position (required if target_type is "position")
     #[serde(default)]
     pub target_position: Option<PositionSchema>,

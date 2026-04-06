@@ -63,7 +63,7 @@ pub use item_life_system::item_life_system;
 pub use llm_buddy_bot_system::{
     llm_buddy_bot_auto_accept_party_system, llm_buddy_chat_capture_system, llm_buddy_follow_system,
     llm_buddy_status_update_system, process_llm_bot_commands_system, LlmBotCommandReceiver,
-    LlmBotManagerResource,
+    LlmBotManagerResource, llm_bot_admin_command_system,
 };
 pub use llm_bot_teleport_to_player_system::llm_bot_teleport_to_player_on_login_system;
 pub use login_server_system::{login_server_authentication_system, login_server_system};

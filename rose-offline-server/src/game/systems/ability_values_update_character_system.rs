@@ -26,7 +26,7 @@ pub struct AbilityValuesCharacterQuery<'w> {
 pub fn ability_values_update_character_system(
     mut query: Query<
         AbilityValuesCharacterQuery,
-        Or<(
+        Or::<(
             Changed<CharacterInfo>,
             Changed<Level>,
             Changed<Equipment>,

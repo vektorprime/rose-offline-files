@@ -1,6 +1,6 @@
 use bevy::{
     ecs::{
-        prelude::{EventReader, Query},
+        prelude::{MessageReader, Query},
         query::QueryData,
     },
     prelude::Mut,
@@ -132,7 +132,7 @@ fn personal_store_buy_item(
 pub fn personal_store_system(
     mut entity_query: Query<PersonalStoreEntityQuery>,
     mut store_query: Query<&mut PersonalStore>,
-    mut personal_store_events: EventReader<PersonalStoreEvent>,
+    mut personal_store_events: MessageReader<PersonalStoreEvent>,
 ) {
     for event in personal_store_events.read() {
         match *event {
