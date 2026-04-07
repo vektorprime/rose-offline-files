@@ -32,6 +32,7 @@ mod save_system;
 mod server_messages_system;
 mod skill_effect_system;
 mod startup_clans_system;
+mod startup_bots_system;
 mod startup_zones_system;
 mod status_effect_system;
 mod update_motion_data_system;
@@ -85,6 +86,7 @@ pub use save_system::save_system;
 pub use server_messages_system::server_messages_system;
 pub use skill_effect_system::skill_effect_system;
 pub use startup_clans_system::startup_clans_system;
+pub use startup_bots_system::startup_bots_system;
 pub use startup_zones_system::startup_zones_system;
 pub use status_effect_system::status_effect_system;
 pub use update_motion_data_system::{

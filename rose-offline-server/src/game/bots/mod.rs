@@ -18,6 +18,7 @@ mod bot_visit_npc;
 mod create_bot;
 mod create_llm_buddy_bot;
 
+use crate::game::components::BasicStats;
 pub use create_bot::{
     bot_build_artisan, bot_build_bourgeois, bot_build_champion, bot_build_cleric, bot_build_knight,
     bot_build_mage, bot_build_raider, bot_build_scout, bot_create_random_build,

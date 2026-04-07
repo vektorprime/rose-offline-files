@@ -54,6 +54,8 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             .add_filter_ignore_str("npc_ai")
             .add_filter_ignore_str("packets")
             .add_filter_ignore_str("quest")
+            .add_filter_ignore_str("tracing::span")
+            .add_filter_ignore_str("big-brain")
             .build(),
         TerminalMode::Stdout,
         ColorChoice::Auto,
@@ -243,10 +245,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let game_data = irose::get_game_data(&virtual_filesystem);
     debug!("Time take to read game data {:?}", started_load.elapsed());
 
-    let game_config = GameConfig {
-        enable_npc_spawns: true,
-        enable_monster_spawns: true,
-    };
+    let game_config = GameConfig::default();
 
     let (game_control_tx, game_control_rx) = crossbeam_channel::unbounded();
 

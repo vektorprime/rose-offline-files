@@ -1,0 +1,833 @@
+warning: method `read_u64_xor` is never used
+   --> rose-file-readers\src\irosephvfs.rs:111:8
+    |
+109 | trait IrosePhXorRead {
+    |       -------------- method in this trait
+110 |     fn read_u32_xor(&mut self, xor_key_offset: usize) -> Result<u32, ReadError>;
+111 |     fn read_u64_xor(&mut self, xor_key_offset: usize) -> Result<u64, ReadError>;
+    |        ^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-file-readers\src\aruavfs.rs:256:18
+    |
+256 |     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile, anyhow::Error> {
+    |                  ^^^^^ the lifetime is elided here    ^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+    = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+    |
+256 |     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile<'_>, anyhow::Error> {
+    |                                                              ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-file-readers\src\virtual_filesystem.rs:126:18
+    |
+126 |     fn open_file(&self, path: &VfsPath) -> Result<VfsFile, anyhow::Error>;
+    |                  ^^^^^                            ^^^^^^^ the same lifetime is hidden here
+    |                  |
+    |                  the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+126 |     fn open_file(&self, path: &VfsPath) -> Result<VfsFile<'_>, anyhow::Error>;
+    |                                                          ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-file-readers\src\virtual_filesystem.rs:141:18
+    |
+141 |     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile, anyhow::Error> {
+    |                  ^^^^^ the lifetime is elided here    ^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+141 |     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile<'_>, anyhow::Error> {
+    |                                                              ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-file-readers\src\virtual_filesystem.rs:173:26
+    |
+173 |     pub fn open_file<'a>(&self, path: impl Into<VfsPath<'a>>) -> Result<VfsFile, anyhow::Error> {
+    |                          ^^^^^ the lifetime is elided here              ^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+173 |     pub fn open_file<'a>(&self, path: impl Into<VfsPath<'a>>) -> Result<VfsFile<'_>, anyhow::Error> {
+    |                                                                                ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-file-readers\src\irosephvfs.rs:189:18
+    |
+189 |     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile, anyhow::Error> {
+    |                  ^^^^^ the lifetime is elided here    ^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+189 |     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile<'_>, anyhow::Error> {
+    |                                                              ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-file-readers\src\titanvfs.rs:162:18
+    |
+162 |     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile, anyhow::Error> {
+    |                  ^^^^^ the lifetime is elided here    ^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+162 |     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile<'_>, anyhow::Error> {
+    |                                                              ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-file-readers\src\vfs.rs:100:18
+    |
+100 |     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile, anyhow::Error> {
+    |                  ^^^^^ the lifetime is elided here    ^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+100 |     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile<'_>, anyhow::Error> {
+    |                                                              ++++
+
+warning: `rose-file-readers` (lib) generated 8 warnings (run `cargo fix --lib -p rose-file-readers` to apply 7 suggestions)
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-data\src\item_database.rs:579:21
+    |
+579 |     pub fn get_item(&self, item: ItemReference) -> Option<ItemData> {
+    |                     ^^^^^ the lifetime is elided here     ^^^^^^^^ the same lifetime is hidden here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+    = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+    |
+579 |     pub fn get_item(&self, item: ItemReference) -> Option<ItemData<'_>> {
+    |                                                                   ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> rose-data\src\string_database.rs:67:21
+   |
+67 |     pub fn get_item(&self, item_type: ItemType, key: &str) -> Option<StlItemEntry> {
+   |                     ^^^^^ the lifetime is elided here                ^^^^^^^^^^^^ the same lifetime is hidden here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+67 |     pub fn get_item(&self, item_type: ItemType, key: &str) -> Option<StlItemEntry<'_>> {
+   |                                                                                  ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> rose-data\src\string_database.rs:97:20
+   |
+97 |     pub fn get_npc(&self, key: &str) -> Option<StlNormalEntry> {
+   |                    ^^^^^                       ^^^^^^^^^^^^^^ the same lifetime is hidden here
+   |                    |
+   |                    the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+   |
+97 |     pub fn get_npc(&self, key: &str) -> Option<StlNormalEntry<'_>> {
+   |                                                              ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-data\src\string_database.rs:102:30
+    |
+102 |     pub fn get_npc_store_tab(&self, key: &str) -> Option<StlNormalEntry> {
+    |                              ^^^^^                       ^^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                              |
+    |                              the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+102 |     pub fn get_npc_store_tab(&self, key: &str) -> Option<StlNormalEntry<'_>> {
+    |                                                                        ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-data\src\string_database.rs:107:22
+    |
+107 |     pub fn get_quest(&self, key: &str) -> Option<StlQuestEntry> {
+    |                      ^^^^^                       ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                      |
+    |                      the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+107 |     pub fn get_quest(&self, key: &str) -> Option<StlQuestEntry<'_>> {
+    |                                                               ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-data\src\string_database.rs:112:22
+    |
+112 |     pub fn get_skill(&self, key: &str) -> Option<StlItemEntry> {
+    |                      ^^^^^                       ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                      |
+    |                      the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+112 |     pub fn get_skill(&self, key: &str) -> Option<StlItemEntry<'_>> {
+    |                                                              ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-data\src\string_database.rs:143:30
+    |
+143 |     pub fn get_status_effect(&self, key: &str) -> Option<StlQuestEntry> {
+    |                              ^^^^^                       ^^^^^^^^^^^^^ the same lifetime is hidden here
+    |                              |
+    |                              the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+143 |     pub fn get_status_effect(&self, key: &str) -> Option<StlQuestEntry<'_>> {
+    |                                                                       ++++
+
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-data\src\string_database.rs:148:21
+    |
+148 |     pub fn get_zone(&self, key: &str) -> Option<StlItemEntry> {
+    |                     ^^^^^                       ^^^^^^^^^^^^ the same lifetime is hidden here
+    |                     |
+    |                     the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+help: use `'_` for type paths
+    |
+148 |     pub fn get_zone(&self, key: &str) -> Option<StlItemEntry<'_>> {
+    |                                                             ++++
+
+warning: `rose-data` (lib) generated 8 warnings (run `cargo fix --lib -p rose-data` to apply 8 suggestions)
+warning: hiding a lifetime that's elided elsewhere is confusing
+   --> rose-network-common\src\packet.rs:176:41
+    |
+176 |     pub fn read_null_terminated_win1252(&mut self) -> Result<Cow<str>, PacketError> {
+    |                                         ^^^^^^^^^            ^^^^^^^^ the same lifetime is hidden here
+    |                                         |
+    |                                         the lifetime is elided here
+    |
+    = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+    = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+    |
+176 |     pub fn read_null_terminated_win1252(&mut self) -> Result<Cow<'_, str>, PacketError> {
+    |                                                                  +++
+
+warning: `rose-network-common` (lib) generated 1 warning (run `cargo fix --lib -p rose-network-common` to apply 1 suggestion)
+   Compiling rose-offline-server v0.1.0 (C:\Users\vicha\RustroverProjects\rose-offline\rose-offline-server)
+warning: method `find_bot_by_name` is never used
+   --> rose-mcp-server\src\main.rs:200:14
+    |
+158 | impl RoseMcpServer {
+    | ------------------ method in this implementation
+...
+200 |     async fn find_bot_by_name(&self, name: &str) -> Option<Uuid> {
+    |              ^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `rose-mcp-server` (bin "rose-mcp-server") generated 1 warning
+warning: unused import: `Without`
+ --> rose-offline-server\src\game\bots\bot_use_attack_skill.rs:2:62
+  |
+2 |     prelude::{Commands, Component, Entity, Query, Res, With, Without},
+  |                                                              ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `SkillType`
+ --> rose-offline-server\src\game\bots\bot_use_attack_skill.rs:7:36
+  |
+7 | use rose_data::{SkillTargetFilter, SkillType};
+  |                                    ^^^^^^^^^
+
+warning: unused import: `Dead`
+  --> rose-offline-server\src\game\bots\bot_use_attack_skill.rs:13:33
+   |
+13 |         CommandData, Cooldowns, Dead, Equipment, ExperiencePoints, HealthPoints, Inventory,
+   |                                 ^^^^
+
+warning: unused import: `Entity`
+ --> rose-offline-server\src\game\bots\bot_use_buff_skill.rs:2:36
+  |
+2 |     prelude::{Commands, Component, Entity, Query, Res, With},
+  |                                    ^^^^^^
+
+warning: unused import: `Entity`
+ --> rose-offline-server\src\game\bots\bot_use_heal_skill.rs:2:36
+  |
+2 |     prelude::{Commands, Component, Entity, Query, Res, With},
+  |                                    ^^^^^^
+
+warning: unused import: `StatusEffects`
+  --> rose-offline-server\src\game\bots\bot_use_heal_skill.rs:13:46
+   |
+13 |         PartyMembership, SkillList, Stamina, StatusEffects, Team,
+   |                                              ^^^^^^^^^^^^^
+
+warning: unused import: `LlmBotCommandReceiver`
+  --> rose-offline-server\src\game\bots\create_llm_buddy_bot.rs:26:37
+   |
+26 |     systems::llm_buddy_bot_system::{LlmBotCommandReceiver, LlmBotManagerResource},
+   |                                     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `LlmBuddyBotBuildType`, `LlmBuddyBotConfig`, and `create_llm_buddy_bot`
+  --> rose-offline-server\src\game\bots\mod.rs:29:29
+   |
+29 |     choose_equipment_items, create_llm_buddy_bot, get_bot_build, process_llm_bot_creations_system,
+   |                             ^^^^^^^^^^^^^^^^^^^^
+30 |     LlmBuddyBotBuildType, LlmBuddyBotConfig,
+   |     ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `CanPartyInviteNearbyBot` and `PartyInviteNearbyBot`
+  --> rose-offline-server\src\game\bots\mod.rs:55:72
+   |
+55 |     action_party_invite_nearby_bot, score_can_party_invite_nearby_bot, CanPartyInviteNearbyBot,
+   |                                                                        ^^^^^^^^^^^^^^^^^^^^^^^
+56 |     PartyInviteNearbyBot,
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MONSTER_OBJECT_VARIABLES_COUNT`
+  --> rose-offline-server\src\game\bundles\mod.rs:13:5
+   |
+13 |     MONSTER_OBJECT_VARIABLES_COUNT, NPC_OBJECT_VARIABLES_COUNT,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `can_learn_skill` and `can_level_up_skill`
+  --> rose-offline-server\src\game\bundles\mod.rs:16:5
+   |
+16 |     can_learn_skill, can_level_up_skill, skill_list_try_learn_skill, skill_list_try_level_up_skill,
+   |     ^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `SkillCasterBundleItem`, `SkillCasterBundle`, `SkillTargetBundleItem`, `SkillTargetBundle`, `check_skill_target_filter`, `skill_can_target_entity`, `skill_can_target_position`, `skill_can_target_self`, and `skill_can_use`
+  --> rose-offline-server\src\game\bundles\mod.rs:20:5
+   |
+20 |     check_skill_target_filter, skill_can_target_entity, skill_can_target_position,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^
+21 |     skill_can_target_self, skill_can_use, SkillCasterBundle, SkillCasterBundleItem,
+   |     ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^
+22 |     SkillTargetBundle, SkillTargetBundleItem, GLOBAL_SKILL_COOLDOWN,
+   |     ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\chat_command_event.rs:1:44
+  |
+1 | use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
+  |                                            ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\chat_event.rs:1:29
+  |
+1 | use bevy::prelude::{Entity, Event, Message};
+  |                             ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\clan_event.rs:1:29
+  |
+1 | use bevy::prelude::{Entity, Event, Message};
+  |                             ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\damage_event.rs:1:29
+  |
+1 | use bevy::prelude::{Entity, Event, Message};
+  |                             ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\equipment_event.rs:1:29
+  |
+1 | use bevy::prelude::{Entity, Event, Message};
+  |                             ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\item_life_event.rs:1:29
+  |
+1 | use bevy::prelude::{Entity, Event, Message};
+  |                             ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\npc_store_event.rs:1:44
+  |
+1 | use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
+  |                                            ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\party_event.rs:1:44
+  |
+1 | use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
+  |                                            ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\personal_store_event.rs:1:44
+  |
+1 | use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
+  |                                            ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\pickup_item_event.rs:1:29
+  |
+1 | use bevy::prelude::{Entity, Event, Message};
+  |                             ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\quest_trigger_event.rs:1:44
+  |
+1 | use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
+  |                                            ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\revive_event.rs:1:29
+  |
+1 | use bevy::prelude::{Entity, Event, Message};
+  |                             ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\reward_item_event.rs:1:44
+  |
+1 | use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
+  |                                            ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\reward_xp_event.rs:1:44
+  |
+1 | use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
+  |                                            ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\save_event.rs:1:44
+  |
+1 | use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
+  |                                            ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\skill_event.rs:2:44
+  |
+2 | use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
+  |                                            ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\use_ammo_event.rs:1:29
+  |
+1 | use bevy::prelude::{Entity, Event, Message};
+  |                             ^^^^^
+
+warning: unused import: `Event`
+ --> rose-offline-server\src\game\events\use_item_event.rs:1:44
+  |
+1 | use bevy::{ecs::prelude::Entity, prelude::{Event, Message}};
+  |                                            ^^^^^
+
+warning: unused import: `restore_llm_buddy_bots_system`
+  --> rose-offline-server\src\game\game_world.rs:46:23
+   |
+46 |         quest_system, restore_llm_buddy_bots_system, revive_event_system, reward_item_system, 
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ClientEntityZone`
+  --> rose-offline-server\src\game\resources\mod.rs:15:65
+   |
+15 | pub use client_entity_list::{ClientEntityList, ClientEntitySet, ClientEntityZone};
+   |                                                                 ^^^^^^^^^^^^^^^^
+
+warning: unused import: `LoginToken`
+  --> rose-offline-server\src\game\resources\mod.rs:19:24
+   |
+19 | pub use login_tokens::{LoginToken, LoginTokens};
+   |                        ^^^^^^^^^^
+
+warning: unused import: `SkillId`
+ --> rose-offline-server\src\game\systems\command_system.rs:6:88
+  |
+6 |     AbilityType, AmmoIndex, EquipmentIndex, ItemClass, SkillActionMode, SkillCooldown, SkillId, SkillTargetFilter, SkillType, VehiclePart...
+  |                                                                                        ^^^^^^^
+
+warning: unused import: `ClientEntityId`
+  --> rose-offline-server\src\game\systems\damage_system.rs:14:9
+   |
+14 |         ClientEntityId,
+   |         ^^^^^^^^^^^^^^
+
+warning: unused imports: `GetChatHistoryResponse`, `ItemInfo`, `NearbyEntity`, and `ThreatInfo`
+  --> rose-offline-server\src\game\systems\llm_buddy_bot_system.rs:21:13
+   |
+21 |             ItemInfo, NearbyEntity, NearbyEntityType, ThreatInfo,
+   |             ^^^^^^^^  ^^^^^^^^^^^^                    ^^^^^^^^^^
+...
+24 |         GetBotSkillsResponse, GetChatHistoryResponse, GetPlayerStatusResponse, GetZoneInfoResponse,
+   |                               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ZoneId`
+  --> rose-offline-server\src\game\systems\llm_buddy_bot_system.rs:38:26
+   |
+38 | use rose_data::{SkillId, ZoneId};
+   |                          ^^^^^^
+
+warning: unused import: `PartyMembership`
+  --> rose-offline-server\src\game\systems\llm_bot_teleport_to_player_system.rs:14:46
+   |
+14 |         ManaPoints, MotionData, NextCommand, PartyMembership, Position, Stamina, Team,
+   |                                              ^^^^^^^^^^^^^^^
+
+warning: unused import: `uuid::Uuid`
+ --> rose-offline-server\src\game\systems\restore_llm_bots_system.rs:6:5
+  |
+6 | use uuid::Uuid;
+  |     ^^^^^^^^^^
+
+warning: unused import: `api::LlmBotCommand`
+ --> rose-offline-server\src\game\systems\restore_llm_bots_system.rs:9:5
+  |
+9 |     api::LlmBotCommand,
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `BotBuild`
+ --> rose-offline-server\src\game\systems\startup_bots_system.rs:5:50
+  |
+5 |     bots::{bot_create_random_build, bot_thinker, BotBuild},
+  |                                                  ^^^^^^^^
+
+warning: unused import: `llm_bot_admin_command_system`
+  --> rose-offline-server\src\game\systems\mod.rs:67:28
+   |
+67 |     LlmBotManagerResource, llm_bot_admin_command_system,
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `http::Method`
+ --> rose-offline-server\src\game\api\routes.rs:4:5
+  |
+4 |     http::Method,
+  |     ^^^^^^^^^^^^
+
+warning: unused imports: `Bytes`, `IntoResponse`, and `extract::State`
+  --> rose-offline-server\src\game\api\server.rs:8:18
+   |
+ 8 |     body::{Body, Bytes},
+   |                  ^^^^^
+ 9 |     extract::State,
+   |     ^^^^^^^^^^^^^^
+...
+12 |     response::{IntoResponse, Response},
+   |                ^^^^^^^^^^^^
+
+warning: unused import: `debug`
+  --> rose-offline-server\src\game\api\server.rs:15:23
+   |
+15 | use log::{info, warn, debug};
+   |                       ^^^^^
+
+warning: unused imports: `Any` and `CorsLayer`
+  --> rose-offline-server\src\game\api\server.rs:18:24
+   |
+18 | use tower_http::cors::{Any, CorsLayer};
+   |                        ^^^  ^^^^^^^^^
+
+warning: unused import: `routes::create_router`
+  --> rose-offline-server\src\game\api\mod.rs:19:9
+   |
+19 | pub use routes::create_router;
+   |         ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `ApiServerConfig` and `start_api_server`
+  --> rose-offline-server\src\game\api\mod.rs:20:18
+   |
+20 | pub use server::{start_api_server, ApiServerConfig};
+   |                  ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^
+
+warning: unused import: `ApiState`
+  --> rose-offline-server\src\game\api\mod.rs:21:17
+   |
+21 | pub use state::{ApiState, BotInfo};
+   |                 ^^^^^^^^
+
+warning: unused import: `game_world::GameWorld`
+  --> rose-offline-server\src\game\mod.rs:16:9
+   |
+16 | pub use game_world::GameWorld;
+   |         ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `time`
+  --> rose-offline-server\src\game\bots\bot_snowball_fight.rs:35:5
+   |
+35 |     time: Res<Time>,
+   |     ^^^^ help: if this is intentional, prefix it with an underscore: `_time`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `skill_data`
+   --> rose-offline-server\src\game\bots\bot_use_attack_skill.rs:109:5
+    |
+109 |     skill_data: &rose_data::SkillData,
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_skill_data`
+
+warning: unused variable: `caster_hp`
+   --> rose-offline-server\src\game\bots\bot_use_attack_skill.rs:186:77
+    |
+186 |         let Ok((caster_entity, caster_ability_values, caster_client_entity, caster_hp,
+    |                                                                             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_caster_hp`
+
+warning: unused variable: `caster_ability_values`
+   --> rose-offline-server\src\game\bots\bot_use_attack_skill.rs:310:40
+    |
+310 |                 let Ok((caster_entity, caster_ability_values, caster_client_entity, caster_hp,
+    |                                        ^^^^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_caster_ability_values`
+
+warning: unused variable: `caster_hp`
+   --> rose-offline-server\src\game\bots\bot_use_attack_skill.rs:310:85
+    |
+310 |                 let Ok((caster_entity, caster_ability_values, caster_client_entity, caster_hp,
+    |                                                                                     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_caster_hp`
+
+warning: unused variable: `caster_mana`
+   --> rose-offline-server\src\game\bots\bot_use_attack_skill.rs:311:56
+    |
+311 |                         caster_move_mode, caster_team, caster_mana, caster_cooldowns,
+    |                                                        ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_caster_mana`
+
+warning: unused variable: `health_points`
+  --> rose-offline-server\src\game\bots\bot_use_buff_skill.rs:34:5
+   |
+34 |     health_points: &HealthPoints,
+   |     ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_health_points`
+
+warning: unused variable: `team`
+  --> rose-offline-server\src\game\bots\bot_use_buff_skill.rs:36:5
+   |
+36 |     team: &Team,
+   |     ^^^^ help: if this is intentional, prefix it with an underscore: `_team`
+
+warning: unused variable: `health_points`
+  --> rose-offline-server\src\game\bots\bot_use_heal_skill.rs:35:5
+   |
+35 |     health_points: &HealthPoints,
+   |     ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_health_points`
+
+warning: unused variable: `team`
+  --> rose-offline-server\src\game\bots\bot_use_heal_skill.rs:37:5
+   |
+37 |     team: &Team,
+   |     ^^^^ help: if this is intentional, prefix it with an underscore: `_team`
+
+warning: unreachable pattern
+  --> rose-offline-server\src\game\bots\create_llm_buddy_bot.rs:76:13
+   |
+75 |             "muse" | "cleric" => Ok(Self::Cleric),
+   |             ----------------- matches all the relevant values
+76 |             "cleric" => Ok(Self::Cleric),
+   |             ^^^^^^^^ no value can reach this
+   |
+   = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `time`
+   --> rose-offline-server\src\game\bundles\entity.rs:222:9
+    |
+222 |         time: &Time,
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_time`
+
+warning: unused variable: `command_sender`
+  --> rose-offline-server\src\game\game_world.rs:98:13
+   |
+98 |         let command_sender = if let Some(manager) = &self.llm_bot_manager {
+   |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_command_sender`
+
+warning: variable does not need to be mutable
+    --> rose-offline-server\src\game\systems\chat_commands_system.rs:1448:17
+     |
+1448 |             let mut target_position: Option<Position> = None;
+     |                 ----^^^^^^^^^^^^^^^
+     |                 |
+     |                 help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `entity`
+    --> rose-offline-server\src\game\systems\chat_commands_system.rs:1454:22
+     |
+1454 |                 for (entity, client_entity_type) in client_entity_zone.iter_entities() {
+     |                      ^^^^^^ help: if this is intentional, prefix it with an underscore: `_entity`
+
+warning: unused variable: `time`
+   --> rose-offline-server\src\game\systems\client_entity_visibility_system.rs:168:5
+    |
+168 |     time: Res<Time>,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_time`
+
+warning: unused variable: `team`
+   --> rose-offline-server\src\game\systems\command_system.rs:378:5
+    |
+378 |     team: &Team,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_team`
+
+warning: unused variable: `party_membership`
+   --> rose-offline-server\src\game\systems\command_system.rs:384:5
+    |
+384 |     party_membership: Option<&PartyMembership>,
+    |     ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_party_membership`
+
+warning: unused variable: `clan_membership`
+   --> rose-offline-server\src\game\systems\command_system.rs:385:5
+    |
+385 |     clan_membership: Option<&ClanMembership>,
+    |     ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_clan_membership`
+
+warning: unused variable: `defender_entity_id`
+   --> rose-offline-server\src\game\systems\damage_system.rs:106:13
+    |
+106 |             defender_entity_id,
+    |             ^^^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_defender_entity_id`
+
+warning: unused variable: `item`
+   --> rose-offline-server\src\game\systems\equipment_event_system.rs:658:21
+    |
+658 |         if let Some(item) = vehicle_item {
+    |                     ^^^^ help: if this is intentional, prefix it with an underscore: `_item`
+
+warning: variable does not need to be mutable
+   --> rose-offline-server\src\game\systems\llm_buddy_bot_system.rs:364:47
+    |
+364 |                     if let Ok((mut buddy_bot, mut command, mut next_command, bot_position, _)) = bot_query.get_mut(entity) {
+    |                                               ----^^^^^^^
+    |                                               |
+    |                                               help: remove this `mut`
+
+warning: unused variable: `npc_opt`
+   --> rose-offline-server\src\game\systems\llm_buddy_bot_system.rs:396:77
+    |
+396 | ...                   .filter(|(_, client_entity, pos_opt, _, npc_opt, _, _, _, _, _, _)| {
+    |                                                               ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_npc_opt`
+
+warning: unused variable: `count`
+   --> rose-offline-server\src\game\systems\llm_buddy_bot_system.rs:138:9
+    |
+138 |     let count = LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_count`
+
+warning: unused variable: `client_ent`
+   --> rose-offline-server\src\game\systems\llm_buddy_bot_system.rs:191:38
+    |
+191 |                         if let Some((client_ent, char_info, pos, mp_opt, ability_opt, level_opt, command_opt)) =
+    |                                      ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_client_ent`
+
+warning: unused variable: `char_info`
+   --> rose-offline-server\src\game\systems\llm_buddy_bot_system.rs:191:50
+    |
+191 |                         if let Some((client_ent, char_info, pos, mp_opt, ability_opt, level_opt, command_opt)) =
+    |                                                  ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_char_info`
+
+warning: unused variable: `command`
+   --> rose-offline-server\src\game\systems\llm_buddy_bot_system.rs:364:47
+    |
+364 |                     if let Ok((mut buddy_bot, mut command, mut next_command, bot_position, _)) = bot_query.get_mut(entity) {
+    |                                               ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_command`
+
+warning: variable does not need to be mutable
+    --> rose-offline-server\src\game\systems\llm_buddy_bot_system.rs:1356:42
+     |
+1356 |         let Ok((buddy_bot, bot_position, mut command, mut next_command)) = bot_query.get_mut(entity)
+     |                                          ----^^^^^^^
+     |                                          |
+     |                                          help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> rose-offline-server\src\game\systems\llm_buddy_bot_system.rs:1557:22
+     |
+1557 |     for (bot_entity, mut party_membership) in bot_query.iter_mut() {
+     |                      ----^^^^^^^^^^^^^^^^
+     |                      |
+     |                      help: remove this `mut`
+
+warning: unused variable: `game_data`
+    --> rose-offline-server\src\game\systems\llm_buddy_bot_system.rs:1588:5
+     |
+1588 |     game_data: Res<GameData>,
+     |     ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_game_data`
+
+warning: variable does not need to be mutable
+    --> rose-offline-server\src\game\systems\npc_ai_system.rs:2083:5
+     |
+2083 |     mut delayed_spawn_query: Query<(Entity, &DelayedSpawn)>,
+     |     ----^^^^^^^^^^^^^^^^^^^
+     |     |
+     |     help: remove this `mut`
+
+warning: unused variable: `zone_entities`
+    --> rose-offline-server\src\game\systems\quest_system.rs:2296:17
+     |
+2296 |     if let Some(zone_entities) = quest_system_parameters.client_entity_list.get_zone(zone_id) {
+     |                 ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_zone_entities`
+
+warning: variable does not need to be mutable
+  --> rose-offline-server\src\game\systems\restore_llm_bots_system.rs:30:5
+   |
+30 |     mut bot_manager: bevy::ecs::system::ResMut<LlmBotManagerResource>,
+   |     ----^^^^^^^^^^^
+   |     |
+   |     help: remove this `mut`
+
+warning: value assigned to `result` is never read
+   --> rose-offline-server\src\game\systems\skill_effect_system.rs:842:41
+    |
+842 | ...                   result = Err(SkillCastError::NotEnoughUseAbility);
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `result` is never read
+   --> rose-offline-server\src\game\systems\skill_effect_system.rs:845:37
+    |
+845 | ...                   result = Err(SkillCastError::NotEnoughUseAbility);
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `old_position`
+  --> rose-offline-server\src\game\systems\update_position_system.rs:33:17
+   |
+33 |             let old_position = position.position;
+   |                 ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_old_position`
+
+warning: unused variable: `query`
+   --> rose-offline-server\src\game\api\handlers.rs:557:11
+    |
+557 |     Query(query): Query<NearbyQuery>,
+    |           ^^^^^ help: if this is intentional, prefix it with an underscore: `_query`
+
+warning: `rose-offline-server` (lib) generated 87 warnings (run `cargo fix --lib -p rose-offline-server` to apply 84 suggestions)
+warning: unused imports: `ActiveStatusEffect`, `DamageCategory`, `DamageType`, `EquipmentItemReference`, `HotbarSlot`, `InventoryPageType`, `InventoryPage`, and `SkillPage`
+  --> rose-offline-server\src\game\components\mod.rs:41:33
+   |
+41 |     AbilityValues, ActiveQuest, ActiveStatusEffect, ActiveStatusEffectRegen, BasicStatType,
+   |                                 ^^^^^^^^^^^^^^^^^^
+42 |     BasicStats, CharacterDeleteTime, CharacterGender, CharacterInfo, CharacterUniqueId,
+43 |     DamageCategory, DamageType, DroppedItem, Equipment, EquipmentItemDatabase,
+   |     ^^^^^^^^^^^^^^  ^^^^^^^^^^
+44 |     EquipmentItemReference, ExperiencePoints, HealthPoints, Hotbar, HotbarSlot, Inventory,
+   |     ^^^^^^^^^^^^^^^^^^^^^^                                          ^^^^^^^^^^
+45 |     InventoryPage, InventoryPageType, ItemDrop, ItemSlot, Level, ManaPoints, Money, MoveMode,
+   |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^
+46 |     MoveSpeed, Npc, QuestState, SkillList, SkillPage, SkillPoints, SkillSlot, Stamina, StatPoints,
+   |                                            ^^^^^^^^^
+
+warning: unused import: `MAX_CHAT_MESSAGES`
+  --> rose-offline-server\src\game\components\mod.rs:68:78
+   |
+68 | pub use llm_buddy_bot::{BotBehaviorMode, ChatMessage, ChatType, LlmBuddyBot, MAX_CHAT_MESSAGES};
+   |                                                                              ^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `MotionDataCharacter` and `MotionDataNpc`
+  --> rose-offline-server\src\game\components\mod.rs:71:35
+   |
+71 | pub use motion_data::{MotionData, MotionDataCharacter, MotionDataNpc};
+   |                                   ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^
+
+warning: `rose-offline-server` (bin "rose-offline-server") generated 87 warnings (84 duplicates) (run `cargo fix --bin "rose-offline-server" -p rose-offline-server` to apply 3 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 28.40s

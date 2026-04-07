@@ -292,7 +292,7 @@ pub fn process_llm_bot_commands_system(
             } => {
                 if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
                     let entity = bot_info.entity;
-                    log::info!("[LLM_DEBUG] Processing Move command for bot {}: entity {:?}", bot_id, entity);
+                    // log::info!("[LLM_DEBUG] Processing Move command for bot {}: entity {:?}", bot_id, entity);
                     if let Ok((mut buddy_bot, _, mut next_command, _, _)) = bot_query.get_mut(entity) {
                         // Stop following when manually moving
                         buddy_bot.is_following = false;
@@ -306,7 +306,7 @@ pub fn process_llm_bot_commands_system(
                         });
                         let mode = parse_move_mode(&move_mode);
 
-                        log::info!("[LLM_DEBUG] Move command details: dest={:?}, target={:?}, mode={:?}", dest, target, mode);
+                        // log::info!("[LLM_DEBUG] Move command details: dest={:?}, target={:?}, mode={:?}", dest, target, mode);
 
                         next_command.command = Some(CommandData::Move {
                             destination: dest,
@@ -315,7 +315,7 @@ pub fn process_llm_bot_commands_system(
                         });
                         next_command.has_sent_server_message = false;
 
-                        log::info!("[LLM_DEBUG] LLM bot {} moving to {:?}", bot_id, dest);
+                        // log::info!("[LLM_DEBUG] LLM bot {} moving to {:?}", bot_id, dest);
                     } else {
                         log::warn!("[LLM_DEBUG] Move command failed: bot {} entity {:?} not found in bot_query (may be placeholder or despawned)", bot_id, entity);
                     }
@@ -330,7 +330,7 @@ pub fn process_llm_bot_commands_system(
             } => {
                 if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
                     let entity = bot_info.entity;
-                    log::info!("[LLM_DEBUG] Processing Follow command for bot {}: entity {:?}", bot_id, entity);
+                    // log::info!("[LLM_DEBUG] Processing Follow command for bot {}: entity {:?}", bot_id, entity);
                     if let Ok((mut buddy_bot, _, _, _, _)) = bot_query.get_mut(entity) {
                         // Look up the player's entity ID by name
                         let player_id = player_query.iter()
@@ -343,7 +343,7 @@ pub fn process_llm_bot_commands_system(
                         
                         if let Some(id) = player_id {
                             buddy_bot.assigned_player_id = id;
-                            log::info!("[LLM_DEBUG] LLM bot {} now following '{}' (id: {}) with distance {}", bot_id, player_name, id, distance);
+                            // log::info!("[LLM_DEBUG] LLM bot {} now following '{}' (id: {}) with distance {}", bot_id, player_name, id, distance);
                         } else {
                             log::warn!("[LLM_DEBUG] LLM bot {} set to follow '{}' but player not found - will follow when player is found", bot_id, player_name);
                         }
@@ -380,11 +380,11 @@ pub fn process_llm_bot_commands_system(
 
                         match target {
                             Some(target_entity) => {
-                                log::info!("[LLM_DEBUG] Bot {} attacking monster target {:?} (ClientEntityId {})", bot_id, target_entity, target_entity_id);
+                                // log::info!("[LLM_DEBUG] Bot {} attacking monster target {:?} (ClientEntityId {})", bot_id, target_entity, target_entity_id);
                                 // Set next_command to ensure it's processed and broadcasted by command_system
                                 next_command.command = Some(CommandData::Attack { target: target_entity });
                                 next_command.has_sent_server_message = false;
-                                log::info!("[LLM_DEBUG] Attack command queued in next_command for bot {}", bot_id);
+                                // log::info!("[LLM_DEBUG] Attack command queued in next_command for bot {}", bot_id);
                             }
                             None => {
                                 log::warn!("[LLM_DEBUG] LLM bot {} cannot find monster with ClientEntityId {} in zone {:?}. Target must be a monster in the same zone.",
@@ -887,9 +887,6 @@ pub fn process_llm_bot_commands_system(
                             .map(|e| (e.entity_id, e.name.as_str()))
                             .collect();
                         
-                        log::info!("[LLM_DEBUG] DIAGNOSTIC - GetBotContext for bot {} returning {} entities. Monsters (first5): {:?}. Players: {:?}",
-                            bot_id, entities.len(), monster_ids, player_ids);
-                        
                         let _ = response_tx.send(crate::game::api::GetBotContextResponse {
                             success: true,
                             error: None,
@@ -1360,13 +1357,13 @@ pub fn llm_buddy_follow_system(
 
         // Skip if not following
         if !buddy_bot.is_following {
-            log::debug!("[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} not in follow mode (is_following=false)", bot_id);
+           //  log::debug!("[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} not in follow mode (is_following=false)", bot_id);
             continue;
         }
 
         // Skip if currently executing a command (let it finish)
         if !command.is_stop() {
-            log::debug!("[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} has active command, skipping follow (command={:?})", bot_id, command);
+           //  log::debug!("[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} has active command, skipping follow (command={:?})", bot_id, command);
             continue;
         }
 
@@ -1393,15 +1390,15 @@ pub fn llm_buddy_follow_system(
 
         // If we couldn't find the player, skip
         let Some((player_pos, player_zone)) = player_data else {
-            log::debug!("[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} cannot find player '{}' (id: {}) in world",
-                bot_id, buddy_bot.assigned_player_name, buddy_bot.assigned_player_id);
+           //  log::debug!("[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} cannot find player '{}' (id: {}) in world",
+            //    bot_id, buddy_bot.assigned_player_name, buddy_bot.assigned_player_id);
             continue;
         };
         
         // Skip if in different zones
         if player_zone != bot_position.zone_id {
-            log::debug!("[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} in zone {:?} but player '{}' in zone {:?}, skipping",
-                bot_id, bot_position.zone_id, buddy_bot.assigned_player_name, player_zone);
+           //  log::debug!("[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} in zone {:?} but player '{}' in zone {:?}, skipping",
+            //    bot_id, bot_position.zone_id, buddy_bot.assigned_player_name, player_zone);
             continue;
         }
 
@@ -1429,16 +1426,16 @@ pub fn llm_buddy_follow_system(
                 bot_pos.z, // Keep bot's Z coordinate unchanged
             );
 
-            log::info!(
-                "[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} following player '{}': bot_pos={:?}, player_pos={:?}, distance_2d={}m, follow_distance={}m, target_pos={:?}",
-                bot_id,
-                buddy_bot.assigned_player_name,
-                bot_pos,
-                player_pos,
-                distance_2d / 100.0,  // Convert to meters for logging
-                buddy_bot.follow_distance,
-                target_pos
-            );
+            // log::info!(
+            //     "[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} following player '{}': bot_pos={:?}, player_pos={:?}, distance_2d={}m, follow_distance={}m, target_pos={:?}",
+            //     bot_id,
+            //     buddy_bot.assigned_player_name,
+            //     bot_pos,
+            //     player_pos,
+            //     distance_2d / 100.0,  // Convert to meters for logging
+            //     buddy_bot.follow_distance,
+            //     target_pos
+            // );
 
             next_command.command = Some(CommandData::Move {
                 destination: target_pos,
@@ -1447,13 +1444,13 @@ pub fn llm_buddy_follow_system(
             });
             next_command.has_sent_server_message = false;
         } else {
-            log::debug!(
-                "[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} within follow distance of player '{}' (distance_2d={}m, follow_distance={}m)",
-                bot_id,
-                buddy_bot.assigned_player_name,
-                distance_2d / 100.0,
-                buddy_bot.follow_distance
-            );
+            // log::debug!(
+            //     "[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} within follow distance of player '{}' (distance_2d={}m, follow_distance={}m)",
+            //     bot_id,
+            //     buddy_bot.assigned_player_name,
+            //     distance_2d / 100.0,
+            //     buddy_bot.follow_distance
+            // );
         }
     }
 }

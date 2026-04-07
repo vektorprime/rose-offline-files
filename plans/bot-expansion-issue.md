@@ -26,27 +26,26 @@
   - `rose-offline-server/src/game/bots/bot_chat.rs` (ambient local chat behavior)
   - `rose-offline-server/src/game/bots/bot_visit_npc.rs` (NPC visit/walk behavior)
 
-## What Is Left To Do
+## Final Status: Completed
 
-### A) Finish behavior implementation
-1. Add and finish **heal behavior** module (`bot_use_heal_skill.rs`) and wire into thinker priority.
-2. Validate and finalize chat/NPC visit scorer thresholds and action flow.
-3. Ensure regular bot thinker ordering is sensible (revive/join/accept-party/combat/heal/buff/lively actions).
+### A) Behavior Implementation
+- [x] Added and finished **heal behavior** module (`bot_use_heal_skill.rs`) and wired into thinker priority.
+- [x] Validated and finalized chat/NPC visit scorer thresholds and action flow.
+- [x] Ensured regular bot thinker ordering is sensible (revive/join/accept-party/combat/heal/buff/lively actions).
 
-### B) Startup auto-spawn of regular bots
-1. Add startup bot system for regular bots only (spawn on launch in map/zone).
-2. Wire startup system into schedule after zone startup.
-3. Add/finish startup bot config fields in `GameConfig` (count, zone, level range, behavior profile).
-4. Update server main config wiring (`main.rs`) to feed startup bot settings.
+### B) Startup Auto-Spawn
+- [x] Implemented startup bot system for regular bots to spawn on launch in map/zone.
+- [x] Wired startup system into the schedule after zone startup.
+- [x] Added startup bot configuration fields to `GameConfig` (count, zone, level range, behavior profile).
+- [x] Updated server main config wiring in `main.rs` to feed startup bot settings.
 
-### C) Party auto-accept guarantee
-1. Finalize a **regular-bot** auto-accept system that accepts pending invites promptly.
-2. Keep this independent of all LLM buddy systems.
+### C) Party Auto-Accept
+- [x] Finalized a **regular-bot** auto-accept system that accepts pending invites promptly.
+- [x] Verified independence from LLM buddy systems.
 
-### D) Stabilize and verify
-1. Resolve compile errors from in-progress edits in regular bot files.
-2. Run `cargo build` (no release, no clean) and fix all compilation errors in touched code.
-3. Update this plan with final status when implementation is complete.
+### D) Stabilization and Verification
+- [x] Resolved all compilation errors in regular bot files.
+- [x] Verified with `cargo build` that the project compiles successfully.
 
 ## Notes
 - Diagnostic noise is currently present from `libs/big-brain` examples/tests in editor diagnostics; implementation focus remains the regular server code path.

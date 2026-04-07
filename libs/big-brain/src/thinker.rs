@@ -46,7 +46,7 @@ pub struct ActionSpan {
 impl ActionSpan {
     pub(crate) fn new(action: Entity, label: Option<&str>) -> Self {
         let span = span!(
-            Level::DEBUG,
+            Level::INFO,
             "action",
             ent = ?action,
             label = field::Empty,
@@ -214,7 +214,7 @@ impl ThinkerBuilder {
 impl ActionBuilder for ThinkerBuilder {
     fn build(&self, cmd: &mut Commands, action_ent: Entity, actor: Entity) {
         let span = span!(
-            Level::DEBUG,
+            Level::INFO,
             "thinker",
             actor = ?actor,
         );
