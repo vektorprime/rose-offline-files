@@ -1,14 +1,18 @@
 use std::time::Duration;
 
 use bevy::{
-    ecs::prelude::{Query, Res},
+    ecs::prelude::{Query, Res, ResMut},
     prelude::Without,
     time::Time,
 };
 use rose_game_common::data::PassiveRecoveryState;
 
 use crate::game::{
-    components::{AbilityValues, Command, Dead, HealthPoints, ManaPoints, PassiveRecoveryTime},
+    components::{
+        AbilityValues, ClientEntity, Command, Dead, HealthPoints, ManaPoints, PassiveRecoveryTime,
+    },
+    messages::server::ServerMessage,
+    resources::ServerMessages,
     GameData,
 };
 
@@ -18,6 +22,7 @@ pub fn passive_recovery_system(
     mut query: Query<
         (
             &mut PassiveRecoveryTime,
+            &ClientEntity,
             &AbilityValues,
             &Command,
             &mut HealthPoints,
@@ -25,11 +30,18 @@ pub fn passive_recovery_system(
         ),
         Without<Dead>,
     >,
+    mut server_messages: ResMut<ServerMessages>,
     game_data: Res<GameData>,
     time: Res<Time>,
 ) {
-    for (mut passive_recovery_time, ability_values, command, mut health_points, mut mana_points) in
-        query.iter_mut()
+    for (
+        mut passive_recovery_time,
+        client_entity,
+        ability_values,
+        command,
+        mut health_points,
+        mut mana_points,
+    ) in query.iter_mut()
     {
         passive_recovery_time.time += time.delta();
 
@@ -59,11 +71,34 @@ pub fn passive_recovery_system(
                 .ability_value_calculator
                 .calculate_passive_recover_mp(ability_values, recovery_state);
 
+            let previous_hp = health_points.hp;
+            let previous_mp = mana_points.mp;
+
             health_points.hp = i32::min(
                 health_points.hp + recover_hp,
                 ability_values.get_max_health(),
             );
             mana_points.mp = i32::min(mana_points.mp + recover_mp, ability_values.get_max_mana());
+
+            if health_points.hp != previous_hp {
+                server_messages.send_entity_message(
+                    client_entity,
+                    ServerMessage::UpdateHealthPoints {
+                        entity_id: client_entity.id,
+                        hp: health_points.hp,
+                    },
+                );
+            }
+
+            if mana_points.mp != previous_mp {
+                server_messages.send_entity_message(
+                    client_entity,
+                    ServerMessage::UpdateManaPoints {
+                        entity_id: client_entity.id,
+                        mp: mana_points.mp,
+                    },
+                );
+            }
         }
     }
 }

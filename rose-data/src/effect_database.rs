@@ -75,4 +75,14 @@ impl EffectDatabase {
                     .map(|path| (EffectFileId::new(id as u16).unwrap(), path))
             })
     }
+
+    /// Returns the number of effects in the database
+    pub fn len(&self) -> usize {
+        self.effects.len()
+    }
+
+    /// Returns true if the database is empty
+    pub fn is_empty(&self) -> bool {
+        self.effects.is_empty()
+    }
 }

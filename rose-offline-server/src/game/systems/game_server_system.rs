@@ -836,7 +836,10 @@ pub fn game_server_main_system(
                     }
                 }
                 ClientMessage::SitToggle => {
-                    if matches!(game_client.command.command, CommandData::Sit) {
+                    if matches!(
+                        game_client.command.command,
+                        CommandData::Sit | CommandData::Sitting
+                    ) {
                         entity_commands.insert(NextCommand::with_standing());
                     } else {
                         entity_commands.insert(NextCommand::with_sitting());

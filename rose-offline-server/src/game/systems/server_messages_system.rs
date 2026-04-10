@@ -1,7 +1,7 @@
 use bevy::ecs::prelude::{Query, ResMut};
 
 use crate::game::{
-    components::{ClientEntitySector, ClientEntityVisibility, GameClient, Position},
+    components::{ClientEntity, ClientEntitySector, ClientEntityVisibility, GameClient, Position},
     resources::ServerMessages,
 };
 
@@ -22,10 +22,16 @@ fn is_sector_in_range(source_sector: bevy::math::UVec2, target_sector: bevy::mat
 }
 
 pub fn server_messages_system(
-    query: Query<(&GameClient, &Position, &ClientEntitySector, &ClientEntityVisibility)>,
+    query: Query<(
+        &GameClient,
+        Option<&ClientEntity>,
+        &Position,
+        &ClientEntitySector,
+        &ClientEntityVisibility,
+    )>,
     mut server_messages: ResMut<ServerMessages>,
 ) {
-    for (game_client, position, client_entity_sector, client_visibility) in query.iter() {
+    for (game_client, client_entity, position, client_entity_sector, client_visibility) in query.iter() {
         for message in server_messages.pending_global_messages.iter() {
             game_client
                 .server_message_tx
@@ -54,10 +60,15 @@ pub fn server_messages_system(
         }
 
         for message in server_messages.pending_entity_messages.iter() {
+            let is_self_target = client_entity
+                .map(|client_entity| client_entity.id == message.entity_id)
+                .unwrap_or(false);
+
             if position.zone_id == message.zone_id
-                && client_visibility
-                    .get(message.entity_id.0)
-                    .map_or(false, |b| *b)
+                && (is_self_target
+                    || client_visibility
+                        .get(message.entity_id.0)
+                        .map_or(false, |b| *b))
             {
                 game_client
                     .server_message_tx

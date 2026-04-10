@@ -926,7 +926,12 @@ impl AbilityValueCalculator for AbilityValuesData {
         recovery_state: PassiveRecoveryState,
     ) -> i32 {
         match recovery_state {
-            PassiveRecoveryState::Normal => 0,
+            PassiveRecoveryState::Normal => i32::max(
+                1,
+                ((ability_values.get_additional_mana_recovery() as f32
+                    + (ability_values.get_concentration() as f32 + 20.0) / 8.0)
+                    / 5.0) as i32,
+            ),
             PassiveRecoveryState::Sitting => {
                 (ability_values.get_additional_mana_recovery() as f32
                     + ((((ability_values.get_concentration() as f32 + 20.0) / 10.0) * 20.0) / 7.0))

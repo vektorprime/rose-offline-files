@@ -120,4 +120,26 @@ impl SkillList {
         self.get_page_mut(skill_slot.0)
             .and_then(|page| page.skills.get_mut(skill_slot.1))
     }
+
+    /// Ensures the page exists and returns a mutable reference to the slot.
+    /// Creates the page with SKILL_PAGE_SIZE slots if it doesn't exist.
+    pub fn ensure_slot_mut(&mut self, skill_slot: SkillSlot) -> &mut Option<SkillId> {
+        // Find or create the page
+        let page = self.pages.iter_mut().find(|page| page.page_type == skill_slot.0);
+        if page.is_none() {
+            // Create a new page with the standard size (30 slots)
+            let new_page = SkillPage::new(skill_slot.0, 30);
+            self.pages.push(new_page);
+        }
+        
+        // Get the page (now guaranteed to exist)
+        let page = self.pages.iter_mut().find(|page| page.page_type == skill_slot.0).unwrap();
+        
+        // Ensure the page has enough slots
+        while page.skills.len() <= skill_slot.1 {
+            page.skills.push(None);
+        }
+        
+        page.skills.get_mut(skill_slot.1).unwrap()
+    }
 }

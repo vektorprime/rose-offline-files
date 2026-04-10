@@ -1451,10 +1451,41 @@ pub fn command_system(
                     action_duration,
                 );
             }
-            CommandData::Sit => {
-                // Set current command to sit
-                *command_entity.command = Command::with_sitting(Duration::from_secs(0));
+            CommandData::Sit | CommandData::Sitting => {
+                // Set current command to sitting transition
+                let duration = command_entity
+                    .motion_data
+                    .get_sit_sitting()
+                    .map(|motion_data| motion_data.duration)
+                    .unwrap_or_else(|| Duration::from_secs(0));
+
+                *command_entity.command = Command::with_sitting(duration);
                 *command_entity.next_command = NextCommand::default();
+
+                server_messages.send_entity_message(
+                    command_entity.client_entity,
+                    ServerMessage::SitToggle {
+                        entity_id: command_entity.client_entity.id,
+                    },
+                );
+            }
+            CommandData::Standing => {
+                // Set current command to stand-up transition
+                let duration = command_entity
+                    .motion_data
+                    .get_sit_standing()
+                    .map(|motion_data| motion_data.duration)
+                    .unwrap_or_else(|| Duration::from_secs(0));
+
+                *command_entity.command = Command::with_standing(duration);
+                *command_entity.next_command = NextCommand::default();
+
+                server_messages.send_entity_message(
+                    command_entity.client_entity,
+                    ServerMessage::SitToggle {
+                        entity_id: command_entity.client_entity.id,
+                    },
+                );
             }
             _ => {}
         }
