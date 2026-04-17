@@ -592,13 +592,44 @@ fn subtract_skill_use_cost(
         let now = Instant::now();
         cooldowns.skill_global = Some(now + GLOBAL_SKILL_COOLDOWN);
 
-        match skill_data.cooldown {
-            SkillCooldown::Skill { duration } => {
-                cooldowns.skill.insert(skill_data.id, now + duration);
+        // Send UpdateCooldown message to the client for server-authoritative cooldown tracking
+        if let Some(game_client) = skill_caster1.game_client {
+            match skill_data.cooldown {
+                SkillCooldown::Skill { duration } => {
+                    cooldowns.skill.insert(skill_data.id, now + duration);
+                    game_client
+                        .server_message_tx
+                        .send(ServerMessage::UpdateCooldown {
+                            skill_id: skill_data.id,
+                            duration,
+                        })
+                        .ok();
+                }
+                SkillCooldown::Group { group, duration } => {
+                    if let Some(group_cooldown) = cooldowns.skill_group.get_mut(group.get()) {
+                        *group_cooldown = Some(now + duration);
+                    }
+                    // For group cooldowns, send the message with the skill that triggered it
+                    // The client will handle group cooldowns appropriately
+                    game_client
+                        .server_message_tx
+                        .send(ServerMessage::UpdateCooldown {
+                            skill_id: skill_event.skill_id,
+                            duration,
+                        })
+                        .ok();
+                }
             }
-            SkillCooldown::Group { group, duration } => {
-                if let Some(group_cooldown) = cooldowns.skill_group.get_mut(group.get()) {
-                    *group_cooldown = Some(now + duration);
+        } else {
+            // For non-player entities (e.g., monsters), just set the cooldown locally
+            match skill_data.cooldown {
+                SkillCooldown::Skill { duration } => {
+                    cooldowns.skill.insert(skill_data.id, now + duration);
+                }
+                SkillCooldown::Group { group, duration } => {
+                    if let Some(group_cooldown) = cooldowns.skill_group.get_mut(group.get()) {
+                        *group_cooldown = Some(now + duration);
+                    }
                 }
             }
         }

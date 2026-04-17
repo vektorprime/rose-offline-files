@@ -47,7 +47,8 @@ use crate::game::{
         save_system, server_messages_system, skill_effect_system, startup_bots_system, startup_clans_system,
         startup_zones_system, status_effect_system, update_character_motion_data_system,
         update_npc_motion_data_system, update_position_system, use_ammo_system, use_item_system, 
-        weight_system, world_server_authentication_system, world_server_system, world_time_system, 
+        weight_system, world_server_authentication_system, world_server_system, world_time_system,
+        position_reconciliation_system, add_position_snapshot_timer_system, PositionReconciliationConfig,
         LlmBotCommandReceiver, LlmBotManagerResource,
     },
 };
@@ -93,6 +94,7 @@ impl GameWorld {
         app.insert_resource(ZoneList::new());
         app.insert_resource(game_config);
         app.insert_resource(game_data);
+        app.insert_resource(PositionReconciliationConfig::default());
 
         // Initialize LLM Bot Manager resources if available
         let command_sender = if let Some(manager) = &self.llm_bot_manager {
@@ -238,10 +240,15 @@ impl GameWorld {
                     )
                         .chain(),
                     clan_system,
+                    // Position reconciliation - validates and corrects client positions
+                    position_reconciliation_system,
                 ),
             )
                 .chain(),
         );
+
+        // Add position snapshot timer to new GameClient entities
+        app.add_systems(PreUpdate, add_position_snapshot_timer_system);
 
         app.add_systems(
             Update,

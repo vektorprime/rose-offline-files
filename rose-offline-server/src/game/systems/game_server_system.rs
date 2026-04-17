@@ -1067,10 +1067,57 @@ pub fn game_server_main_system(
                     });
                 }
                 ClientMessage::MoveCollision { position } => {
-                    // TODO: Sanity check position
-                    entity_commands
-                        .insert(NextCommand::with_move(position, None, None))
-                        .insert(Position::new(position, game_client.position.zone_id));
+                    // Server-authoritative position validation
+                    // Validate position is within reasonable bounds from current position
+                    let current_pos = game_client.position.position;
+                    let max_move_distance = 500.0; // Maximum allowed movement per tick (in cm)
+                    
+                    // Check if the position change is physically possible
+                    let distance = position.xy().distance(current_pos.xy());
+                    
+                    // Get the entity's move speed for validation
+                    let max_speed = game_client.move_speed.speed;
+                    let time_delta = 0.1; // Assume ~100ms tick rate
+                    let max_allowed_distance = max_speed * time_delta * 1.5; // 50% tolerance for network lag
+                    
+                    // Also check for teleportation (instant large distance changes)
+                    let is_teleporting = distance > max_move_distance;
+                    let is_speed_hacking = distance > max_allowed_distance;
+                    
+                    if is_teleporting {
+                        // Position is too far - reject and send adjustment
+                        server_messages.send_entity_message(
+                            game_client.client_entity,
+                            ServerMessage::AdjustPosition {
+                                entity_id: game_client.client_entity_id,
+                                position: current_pos,
+                            },
+                        );
+                        log::warn!(
+                            "[MOVE_VALIDATION] Entity {} rejected teleport attempt: distance={:.2}cm (max={:.2}cm)",
+                            game_client.client_entity_id,
+                            distance,
+                            max_move_distance
+                        );
+                    } else if is_speed_hacking {
+                        // Allow the movement but log warning for monitoring
+                        // Server will be authoritative, so client will be corrected if actually invalid
+                        log::warn!(
+                            "[MOVE_VALIDATION] Entity {} possible speed hack: distance={:.2}cm (allowed={:.2}cm)",
+                            game_client.client_entity_id,
+                            distance,
+                            max_allowed_distance
+                        );
+                        // Still accept the position but mark for reconciliation
+                        entity_commands
+                            .insert(NextCommand::with_move(position, None, None))
+                            .insert(Position::new(position, game_client.position.zone_id));
+                    } else {
+                        // Position is valid - accept it
+                        entity_commands
+                            .insert(NextCommand::with_move(position, None, None))
+                            .insert(Position::new(position, game_client.position.zone_id));
+                    }
                 }
                 ClientMessage::CraftInsertGem {
                     equipment_index,

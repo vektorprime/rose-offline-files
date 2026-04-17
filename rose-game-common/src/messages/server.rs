@@ -12,11 +12,11 @@ use rose_data::{
 
 use crate::{
     components::{
-        ActiveStatusEffect, BasicStatType, BasicStats, CharacterDeleteTime, CharacterInfo,
-        CharacterUniqueId, ClanLevel, ClanMark, ClanPoints, ClanUniqueId, DroppedItem, Equipment,
-        ExperiencePoints, HealthPoints, Hotbar, HotbarSlot, Inventory, ItemSlot, Level, ManaPoints,
-        Money, MoveMode, MoveSpeed, Npc, QuestState, SkillList, SkillPoints, SkillSlot, Stamina,
-        StatPoints, Team, UnionMembership,
+        ActiveStatusEffect, ActiveStatusEffectRegen, BasicStatType, BasicStats,
+        CharacterDeleteTime, CharacterInfo, CharacterUniqueId, ClanLevel, ClanMark, ClanPoints,
+        ClanUniqueId, DroppedItem, Equipment, ExperiencePoints, HealthPoints, Hotbar, HotbarSlot,
+        Inventory, ItemSlot, Level, ManaPoints, Money, MoveMode, MoveSpeed, Npc, QuestState,
+        SkillList, SkillPoints, SkillSlot, Stamina, StatPoints, Team, UnionMembership,
     },
     data::Damage,
     messages::{ClientEntityId, PartyItemSharing, PartyRejectInviteReason, PartyXpSharing},
@@ -536,11 +536,33 @@ pub enum ServerMessage {
         entity_id: ClientEntityId,
         status_effects: ActiveStatusEffects,
         updated_values: Vec<i32>,
+        regen_effects: EnumMap<StatusEffectType, Option<ActiveStatusEffectRegen>>,
     },
     UpdateSpeed {
         entity_id: ClientEntityId,
         run_speed: i32,
         passive_attack_speed: i32,
+    },
+    UpdateCooldown {
+        skill_id: SkillId,
+        duration: Duration,
+    },
+    UpdateConsumableCooldown {
+        cooldown_group: u8,
+        duration: Duration,
+    },
+    UpdateAbilityValues {
+        entity_id: ClientEntityId,
+        attack_power: i32,
+        defence: i32,
+        hit: i32,
+        resistance: i32,
+        avoid: i32,
+        attack_speed: i32,
+        critical: i32,
+        max_health: i32,
+        max_mana: i32,
+        move_speed: i32,
     },
     UpdateXpStamina {
         xp: u64,

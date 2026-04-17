@@ -236,6 +236,28 @@ warning: method `find_bot_by_name` is never used
 
 warning: `rose-mcp-server` (bin "rose-mcp-server") generated 1 warning
    Compiling rose-offline-server v0.1.0 (C:\Users\vicha\RustroverProjects\rose-offline\rose-offline-server)
+error[E0425]: cannot find type `With` in this scope
+   --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:114:27
+    |
+114 |     query: Query<Entity, (With<GameClient>, Without<PositionSnapshotTimer>)>,
+    |                           ^^^^ not found in this scope
+    |
+help: consider importing this struct
+    |
+  1 + use bevy::prelude::With;
+    |
+
+error[E0425]: cannot find type `Without` in this scope
+   --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:114:45
+    |
+114 |     query: Query<Entity, (With<GameClient>, Without<PositionSnapshotTimer>)>,
+    |                                             ^^^^^^^ not found in this scope
+    |
+help: consider importing this struct
+    |
+  1 + use bevy::prelude::Without;
+    |
+
 warning: unused import: `Without`
  --> rose-offline-server\src\game\bots\bot_use_attack_skill.rs:2:62
   |
@@ -489,6 +511,20 @@ warning: unused import: `messages::server::ServerMessage`
 14 |     messages::server::ServerMessage,
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+warning: unused import: `math::Vec3`
+ --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:3:5
+  |
+3 |     math::Vec3,
+  |     ^^^^^^^^^^
+
+warning: unused imports: `ClientEntityList` and `ClientEntity`
+ --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:8:18
+  |
+8 |     components::{ClientEntity, GameClient, Position},
+  |                  ^^^^^^^^^^^^
+9 |     resources::{ClientEntityList, ServerMessages},
+  |                 ^^^^^^^^^^^^^^^^
+
 warning: unused import: `uuid::Uuid`
  --> rose-offline-server\src\game\systems\restore_llm_bots_system.rs:6:5
   |
@@ -508,10 +544,16 @@ warning: unused import: `BotBuild`
   |                                                  ^^^^^^^^
 
 warning: unused import: `llm_bot_admin_command_system`
-  --> rose-offline-server\src\game\systems\mod.rs:67:28
+  --> rose-offline-server\src\game\systems\mod.rs:68:28
    |
-67 |     LlmBotManagerResource, llm_bot_admin_command_system,
+68 |     LlmBotManagerResource, llm_bot_admin_command_system,
    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `PositionSnapshotTimer`
+  --> rose-offline-server\src\game\systems\mod.rs:84:35
+   |
+84 |     PositionReconciliationConfig, PositionSnapshotTimer,
+   |                                   ^^^^^^^^^^^^^^^^^^^^^
 
 warning: unused import: `http::Method`
  --> rose-offline-server\src\game\api\routes.rs:4:5
@@ -565,6 +607,191 @@ warning: unused import: `game_world::GameWorld`
    |
 16 | pub use game_world::GameWorld;
    |         ^^^^^^^^^^^^^^^^^^^^^
+
+error[E0277]: `PositionReconciliationConfig` is not a `Resource`
+  --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:61:13
+   |
+61 |     config: Res<PositionReconciliationConfig>,
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid `Resource`
+   |
+help: the trait `bevy::prelude::Resource` is not implemented for `PositionReconciliationConfig`
+  --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:13:1
+   |
+13 | pub struct PositionReconciliationConfig {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: consider annotating `PositionReconciliationConfig` with `#[derive(Resource)]`
+   = help: the following other types implement trait `bevy::prelude::Resource`:
+             AccessibilityRequested
+             AccumulatedMouseMotion
+             AccumulatedMouseScroll
+             AppTypeRegistry
+             AssetProcessor
+             AssetServer
+             AssetSourceBuilders
+             Assets<A>
+           and 274 others
+note: required by a bound in `bevy::prelude::Res`
+  --> C:\Users\vicha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bevy_ecs-0.18.1\src\change_detection\params.rs:99:32
+   |
+99 | pub struct Res<'w, T: ?Sized + Resource> {
+   |                                ^^^^^^^^ required by this bound in `Res`
+
+error[E0277]: `PositionReconciliationConfig` is not a `Resource`
+   --> rose-offline-server\src\game\game_world.rs:97:29
+    |
+ 97 |         app.insert_resource(PositionReconciliationConfig::default());
+    |             --------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid `Resource`
+    |             |
+    |             required by a bound introduced by this call
+    |
+help: the trait `bevy::prelude::Resource` is not implemented for `PositionReconciliationConfig`
+   --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:13:1
+    |
+ 13 | pub struct PositionReconciliationConfig {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: consider annotating `PositionReconciliationConfig` with `#[derive(Resource)]`
+    = help: the following other types implement trait `bevy::prelude::Resource`:
+              AccessibilityRequested
+              AccumulatedMouseMotion
+              AccumulatedMouseScroll
+              AppTypeRegistry
+              AssetProcessor
+              AssetServer
+              AssetSourceBuilders
+              Assets<A>
+            and 274 others
+note: required by a bound in `bevy::prelude::App::insert_resource`
+   --> C:\Users\vicha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\bevy_app-0.18.1\src\app.rs:435:31
+    |
+435 |     pub fn insert_resource<R: Resource>(&mut self, resource: R) -> &mut Self {
+    |                               ^^^^^^^^ required by this bound in `App::insert_resource`
+
+error[E0599]: `(..., ..., ...)` is not an iterator
+   --> rose-offline-server\src\game\game_world.rs:247:18
+    |
+200 | /             (
+201 | |                 (
+202 | |                     world_time_system,
+203 | |                     control_server_system,
+...   |
+247 | |                 .chain(),
+    | |                 -^^^^^ `(..., ..., ...)` is not an iterator
+    | |_________________|
+    |
+    |
+    = note: the following trait bounds were not satisfied:
+            `((for<'a, 'b> fn(bevy::prelude::Res<'a, Time>, bevy::prelude::ResMut<'b, world_time::WorldTime>) {world_time_system}, for<'a, 'b, 'c, 'd, 'e, 'f> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Res<'c, ControlChannel>, bevy::prelude::ResMut<'d, LoginTokens>, bevy::prelude::ResMut<'e, ServerList>, bevy::prelude::MessageWriter<'f, SaveEvent>) {control_server_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Query<'c, 'd, (bevy::prelude::Entity, &'e LoginClient), bevy::prelude::Without<Account>>, bevy::prelude::Res<'f, LoginTokens>, bevy::prelude::Res<'g, ServerList>) {login_server_authentication_system}, for<'a, 'b, 'c, 'd, 'e, 'f> fn(bevy::prelude::Query<'a, 'b, (bevy::prelude::Entity, &'c Account, &'d mut LoginClient)>, bevy::prelude::ResMut<'e, LoginTokens>, bevy::prelude::Res<'f, ServerList>) {login_server_system}, for<'a, 'b, 'c, 'd, 'e, 'f> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Query<'c, 'd, (bevy::prelude::Entity, &'e mut WorldClient), bevy::prelude::Without<Account>>, bevy::prelude::ResMut<'f, LoginTokens>) {world_server_authentication_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k> fn(bevy::prelude::Query<'a, 'b, (&'c mut WorldClient, &'d mut Account, &'e mut character_list::CharacterList)>, bevy::prelude::Query<'f, 'g, &'h ServerInfo>, bevy::prelude::ResMut<'i, LoginTokens>, bevy::prelude::Res<'j, GameData>, bevy::prelude::MessageWriter<'k, ClanEvent>) {world_server_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Query<'c, 'd, (bevy::prelude::Entity, &'e mut GameClient), bevy::prelude::Without<CharacterInfo>>, bevy::prelude::Query<'f, 'g, &'h mut WorldClient>, bevy::prelude::Query<'i, 'j, (bevy::prelude::Entity, &'k mut game::components::clan::Clan)>, bevy::prelude::ResMut<'l, LoginTokens>, bevy::prelude::Res<'m, GameData>) {game_server_authentication_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm, 'n, 'o, 'p, 'q, 'r> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Query<'c, 'd, (bevy::prelude::Entity, &'e GameClient, &'f CharacterInfo, &'g ExperiencePoints, &'h Team, &'i rose_game_common::components::HealthPoints, &'j ManaPoints, &'k position::Position), bevy::prelude::Without<ClientEntity>>, bevy::prelude::ResMut<'l, ClientEntityList>, bevy::prelude::Res<'m, WorldRates>, bevy::prelude::Res<'n, world_time::WorldTime>, bevy::prelude::Query<'o, 'p, (bevy::prelude::Entity, &'q mut party::Party)>, bevy::prelude::MessageWriter<'r, PartyMemberEvent>) {game_server_join_system}, ScheduleConfigs<Box<(dyn bevy::prelude::System<In = (), Out = ()> + 'static)>>, for<'a, 'b, 'c, 'd, 'e, 'f, 'g> fn(ChatCommandParams<'a, 'b>, bevy::prelude::Query<'c, 'd, ChatCommandUserQuery<'e>>, bevy::prelude::MessageReader<'f, 'g, ChatCommandEvent>) {chat_commands_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Query<'c, 'd, (bevy::prelude::Entity, &'e mut MonsterSpawnPoint, &'f position::Position)>, bevy::prelude::Res<'g, Time>, bevy::prelude::ResMut<'h, ClientEntityList>, bevy::prelude::Res<'i, GameData>, bevy::prelude::Res<'j, zone_list::ZoneList>) {monster_spawn_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm, 'n, 'o, 'p, 'q, 'r, 's, 't, 'u, 'v, 'w, 'x> fn(AiSystemParameters<'a, 'b>, AiSystemResources<'c, 'd>, bevy::prelude::Query<'e, 'f, npc_ai_system::NpcQuery<'g>>, bevy::prelude::Query<'h, 'i, &'j mut MonsterSpawnPoint>, bevy::prelude::Query<'k, 'l, AttackerQuery<'m>>, bevy::prelude::Query<'n, 'o, KillerQuery<'p>>, bevy::prelude::Query<'q, 'r, &'s party::Party>, bevy::prelude::Query<'t, 'u, &'v GameClient>, bevy::prelude::Res<'w, WorldRates>, bevy::prelude::MessageWriter<'x, RewardXpEvent>) {npc_ai_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm, 'n> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Query<'c, 'd, (bevy::prelude::Entity, &'e EntityExpireTime, std::option::Option<&'f position::Position>, std::option::Option<&'g ClientEntity>, std::option::Option<&'h ClientEntitySector>, std::option::Option<&'i game::components::command::Command>)>, bevy::prelude::Query<'j, 'k, (bevy::prelude::Entity, &'l OwnerExpireTime, std::option::Option<&'m PartyOwner>)>, bevy::prelude::ResMut<'n, ClientEntityList>) {expire_time_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l> fn(bevy::prelude::Query<'a, 'b, (bevy::prelude::Entity, &'c ClientEntity, &'d AbilityValues, &'e mut rose_game_common::components::HealthPoints, std::option::Option<&'f mut ManaPoints>, &'g mut StatusEffects, &'h mut StatusEffectsRegen)>, bevy::prelude::MessageWriter<'i, DamageEvent>, bevy::prelude::ResMut<'j, ServerMessages>, bevy::prelude::Res<'k, GameData>, bevy::prelude::Res<'l, Time>) {status_effect_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k> fn(bevy::prelude::Query<'a, 'b, (&'c mut PassiveRecoveryTime, &'d ClientEntity, &'e AbilityValues, &'f game::components::command::Command, &'g mut rose_game_common::components::HealthPoints, &'h mut ManaPoints), bevy::prelude::Without<dead::Dead>>, bevy::prelude::ResMut<'i, ServerMessages>, bevy::prelude::Res<'j, GameData>, bevy::prelude::Res<'k, Time>) {passive_recovery_system}, for<'a, 'b, 'c, 'd, 'e> fn(bevy::prelude::Query<'a, 'b, (bevy::prelude::Entity, &'c mut DrivingTime)>, bevy::prelude::Res<'d, Time>, bevy::prelude::MessageWriter<'e, ItemLifeEvent>) {driving_time_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm, 'n, 'o, 'p, 'q, 'r, 's, 't, 'u, 'v, 'w, 'x, 'y, 'z, 'z0, 'z1, 'z2, 'z3, 'z4, 'z5, 'z6, 'z7, 'z8, 'z9, 'z10, 'z11, 'z12, 'z13, 'z14, 'z15, 'z16, 'z17, 'z18, 'z19, 'z20, 'z21, 'z22, 'z23, 'z24, 'z25, 'z26, 'z27, 'z28, 'z29, 'z30, 'z31> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Res<'c, LlmBotCommandReceiver>, bevy::prelude::ResMut<'d, LlmBotManagerResource>, bevy::prelude::ResMut<'e, ClientEntityList>, bevy::prelude::Query<'f, 'g, (&'h mut LlmBuddyBot, &'i mut game::components::command::Command, &'j mut NextCommand, &'k position::Position, bevy::prelude::Entity)>, bevy::prelude::Query<'l, 'm, &'n ClientEntity, bevy::prelude::With<LlmBuddyBot>>, bevy::prelude::Query<'o, 'p, (&'q ClientEntity, &'r ClientEntitySector, &'s position::Position), bevy::prelude::With<LlmBuddyBot>>, bevy::prelude::Query<'t, 'u, &'v SkillList>, bevy::prelude::Query<'w, 'x, (bevy::prelude::Entity, &'y ClientEntity, std::option::Option<&'z position::Position>, std::option::Option<&'z0 CharacterInfo>, std::option::Option<&'z1 rose_game_common::components::Npc>, std::option::Option<&'z2 ItemDrop>, std::option::Option<&'z3 rose_game_common::components::HealthPoints>, std::option::Option<&'z4 ManaPoints>, std::option::Option<&'z5 AbilityValues>, std::option::Option<&'z6 rose_game_common::components::Level>, std::option::Option<&'z7 game::components::command::Command>), bevy::prelude::Without<LlmBuddyBot>>, bevy::prelude::Query<'z8, 'z9, (&'z10 ClientEntity, &'z11 CharacterInfo, &'z12 position::Position, std::option::Option<&'z13 ManaPoints>, std::option::Option<&'z14 AbilityValues>, std::option::Option<&'z15 rose_game_common::components::Level>, std::option::Option<&'z16 game::components::command::Command>), bevy::prelude::Without<LlmBuddyBot>>, bevy::prelude::Query<'z17, 'z18, (&'z19 position::Position, std::option::Option<&'z20 rose_game_common::components::HealthPoints>, std::option::Option<&'z21 ManaPoints>, std::option::Option<&'z22 rose_game_common::components::Stamina>, std::option::Option<&'z23 AbilityValues>, std::option::Option<&'z24 dead::Dead>), bevy::prelude::With<LlmBuddyBot>>, bevy::prelude::Query<'z25, 'z26, &'z27 rose_game_common::components::Inventory>, bevy::prelude::ResMut<'z28, ServerMessages>, bevy::prelude::MessageWriter<'z29, UseItemEvent>, bevy::prelude::MessageWriter<'z30, ChatMessageEvent>, bevy::prelude::Res<'z31, GameData>) {process_llm_bot_commands_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm, 'n> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Res<'c, GameData>, bevy::prelude::ResMut<'d, LlmBotManagerResource>, bevy::prelude::ResMut<'e, ClientEntityList>, bevy::prelude::Query<'f, 'g, (bevy::prelude::Entity, &'h position::Position, &'i CharacterInfo, &'j ClientEntity), bevy::prelude::Without<LlmBuddyBot>>, bevy::prelude::MessageWriter<'k, PartyEvent>, bevy::prelude::Query<'l, 'm, &'n AbilityValues, bevy::prelude::With<LlmBuddyBot>>) {process_llm_bot_creations_system}), ApplyDeferred, (ScheduleConfigs<Box<(dyn bevy::prelude::System<In = (), Out = ()> + 'static)>>, ScheduleConfigs<Box<(dyn bevy::prelude::System<In = (), Out = ()> + 'static)>>, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm, 'n, 'o, 'p, 'q> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::MessageReader<'c, 'd, ClanEvent>, bevy::prelude::Query<'e, 'f, MemberQuery<'g>, Changed<ClanMembership>>, bevy::prelude::Query<'h, 'i, MemberQuery<'j>>, bevy::prelude::Query<'k, 'l, CreatorQuery<'m>>, bevy::prelude::Query<'n, 'o, &'p mut game::components::clan::Clan>, bevy::prelude::ResMut<'q, ServerMessages>) {clan_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h> fn(bevy::prelude::Query<'a, 'b, (bevy::prelude::Entity, &'c GameClient, &'d position::Position, &'e mut PositionSnapshotTimer)>, bevy::prelude::ResMut<'f, ServerMessages>, bevy::prelude::Res<'g, Time>, bevy::prelude::Res<'h, PositionReconciliationConfig>) {position_reconciliation_system})): Iterator`
+            which is required by `&mut ((for<'a, 'b> fn(bevy::prelude::Res<'a, Time>, bevy::prelude::ResMut<'b, world_time::WorldTime>) {world_time_system}, for<'a, 'b, 'c, 'd, 'e, 'f> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Res<'c, ControlChannel>, bevy::prelude::ResMut<'d, LoginTokens>, bevy::prelude::ResMut<'e, ServerList>, bevy::prelude::MessageWriter<'f, SaveEvent>) {control_server_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Query<'c, 'd, (bevy::prelude::Entity, &'e LoginClient), bevy::prelude::Without<Account>>, bevy::prelude::Res<'f, LoginTokens>, bevy::prelude::Res<'g, ServerList>) {login_server_authentication_system}, for<'a, 'b, 'c, 'd, 'e, 'f> fn(bevy::prelude::Query<'a, 'b, (bevy::prelude::Entity, &'c Account, &'d mut LoginClient)>, bevy::prelude::ResMut<'e, LoginTokens>, bevy::prelude::Res<'f, ServerList>) {login_server_system}, for<'a, 'b, 'c, 'd, 'e, 'f> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Query<'c, 'd, (bevy::prelude::Entity, &'e mut WorldClient), bevy::prelude::Without<Account>>, bevy::prelude::ResMut<'f, LoginTokens>) {world_server_authentication_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k> fn(bevy::prelude::Query<'a, 'b, (&'c mut WorldClient, &'d mut Account, &'e mut character_list::CharacterList)>, bevy::prelude::Query<'f, 'g, &'h ServerInfo>, bevy::prelude::ResMut<'i, LoginTokens>, bevy::prelude::Res<'j, GameData>, bevy::prelude::MessageWriter<'k, ClanEvent>) {world_server_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Query<'c, 'd, (bevy::prelude::Entity, &'e mut GameClient), bevy::prelude::Without<CharacterInfo>>, bevy::prelude::Query<'f, 'g, &'h mut WorldClient>, bevy::prelude::Query<'i, 'j, (bevy::prelude::Entity, &'k mut game::components::clan::Clan)>, bevy::prelude::ResMut<'l, LoginTokens>, bevy::prelude::Res<'m, GameData>) {game_server_authentication_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm, 'n, 'o, 'p, 'q, 'r> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Query<'c, 'd, (bevy::prelude::Entity, &'e GameClient, &'f CharacterInfo, &'g ExperiencePoints, &'h Team, &'i rose_game_common::components::HealthPoints, &'j ManaPoints, &'k position::Position), bevy::prelude::Without<ClientEntity>>, bevy::prelude::ResMut<'l, ClientEntityList>, bevy::prelude::Res<'m, WorldRates>, bevy::prelude::Res<'n, world_time::WorldTime>, bevy::prelude::Query<'o, 'p, (bevy::prelude::Entity, &'q mut party::Party)>, bevy::prelude::MessageWriter<'r, PartyMemberEvent>) {game_server_join_system}, ScheduleConfigs<Box<(dyn bevy::prelude::System<In = (), Out = ()> + 'static)>>, for<'a, 'b, 'c, 'd, 'e, 'f, 'g> fn(ChatCommandParams<'a, 'b>, bevy::prelude::Query<'c, 'd, ChatCommandUserQuery<'e>>, bevy::prelude::MessageReader<'f, 'g, ChatCommandEvent>) {chat_commands_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Query<'c, 'd, (bevy::prelude::Entity, &'e mut MonsterSpawnPoint, &'f position::Position)>, bevy::prelude::Res<'g, Time>, bevy::prelude::ResMut<'h, ClientEntityList>, bevy::prelude::Res<'i, GameData>, bevy::prelude::Res<'j, zone_list::ZoneList>) {monster_spawn_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm, 'n, 'o, 'p, 'q, 'r, 's, 't, 'u, 'v, 'w, 'x> fn(AiSystemParameters<'a, 'b>, AiSystemResources<'c, 'd>, bevy::prelude::Query<'e, 'f, npc_ai_system::NpcQuery<'g>>, bevy::prelude::Query<'h, 'i, &'j mut MonsterSpawnPoint>, bevy::prelude::Query<'k, 'l, AttackerQuery<'m>>, bevy::prelude::Query<'n, 'o, KillerQuery<'p>>, bevy::prelude::Query<'q, 'r, &'s party::Party>, bevy::prelude::Query<'t, 'u, &'v GameClient>, bevy::prelude::Res<'w, WorldRates>, bevy::prelude::MessageWriter<'x, RewardXpEvent>) {npc_ai_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm, 'n> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Query<'c, 'd, (bevy::prelude::Entity, &'e EntityExpireTime, std::option::Option<&'f position::Position>, std::option::Option<&'g ClientEntity>, std::option::Option<&'h ClientEntitySector>, std::option::Option<&'i game::components::command::Command>)>, bevy::prelude::Query<'j, 'k, (bevy::prelude::Entity, &'l OwnerExpireTime, std::option::Option<&'m PartyOwner>)>, bevy::prelude::ResMut<'n, ClientEntityList>) {expire_time_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l> fn(bevy::prelude::Query<'a, 'b, (bevy::prelude::Entity, &'c ClientEntity, &'d AbilityValues, &'e mut rose_game_common::components::HealthPoints, std::option::Option<&'f mut ManaPoints>, &'g mut StatusEffects, &'h mut StatusEffectsRegen)>, bevy::prelude::MessageWriter<'i, DamageEvent>, bevy::prelude::ResMut<'j, ServerMessages>, bevy::prelude::Res<'k, GameData>, bevy::prelude::Res<'l, Time>) {status_effect_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k> fn(bevy::prelude::Query<'a, 'b, (&'c mut PassiveRecoveryTime, &'d ClientEntity, &'e AbilityValues, &'f game::components::command::Command, &'g mut rose_game_common::components::HealthPoints, &'h mut ManaPoints), bevy::prelude::Without<dead::Dead>>, bevy::prelude::ResMut<'i, ServerMessages>, bevy::prelude::Res<'j, GameData>, bevy::prelude::Res<'k, Time>) {passive_recovery_system}, for<'a, 'b, 'c, 'd, 'e> fn(bevy::prelude::Query<'a, 'b, (bevy::prelude::Entity, &'c mut DrivingTime)>, bevy::prelude::Res<'d, Time>, bevy::prelude::MessageWriter<'e, ItemLifeEvent>) {driving_time_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm, 'n, 'o, 'p, 'q, 'r, 's, 't, 'u, 'v, 'w, 'x, 'y, 'z, 'z0, 'z1, 'z2, 'z3, 'z4, 'z5, 'z6, 'z7, 'z8, 'z9, 'z10, 'z11, 'z12, 'z13, 'z14, 'z15, 'z16, 'z17, 'z18, 'z19, 'z20, 'z21, 'z22, 'z23, 'z24, 'z25, 'z26, 'z27, 'z28, 'z29, 'z30, 'z31> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Res<'c, LlmBotCommandReceiver>, bevy::prelude::ResMut<'d, LlmBotManagerResource>, bevy::prelude::ResMut<'e, ClientEntityList>, bevy::prelude::Query<'f, 'g, (&'h mut LlmBuddyBot, &'i mut game::components::command::Command, &'j mut NextCommand, &'k position::Position, bevy::prelude::Entity)>, bevy::prelude::Query<'l, 'm, &'n ClientEntity, bevy::prelude::With<LlmBuddyBot>>, bevy::prelude::Query<'o, 'p, (&'q ClientEntity, &'r ClientEntitySector, &'s position::Position), bevy::prelude::With<LlmBuddyBot>>, bevy::prelude::Query<'t, 'u, &'v SkillList>, bevy::prelude::Query<'w, 'x, (bevy::prelude::Entity, &'y ClientEntity, std::option::Option<&'z position::Position>, std::option::Option<&'z0 CharacterInfo>, std::option::Option<&'z1 rose_game_common::components::Npc>, std::option::Option<&'z2 ItemDrop>, std::option::Option<&'z3 rose_game_common::components::HealthPoints>, std::option::Option<&'z4 ManaPoints>, std::option::Option<&'z5 AbilityValues>, std::option::Option<&'z6 rose_game_common::components::Level>, std::option::Option<&'z7 game::components::command::Command>), bevy::prelude::Without<LlmBuddyBot>>, bevy::prelude::Query<'z8, 'z9, (&'z10 ClientEntity, &'z11 CharacterInfo, &'z12 position::Position, std::option::Option<&'z13 ManaPoints>, std::option::Option<&'z14 AbilityValues>, std::option::Option<&'z15 rose_game_common::components::Level>, std::option::Option<&'z16 game::components::command::Command>), bevy::prelude::Without<LlmBuddyBot>>, bevy::prelude::Query<'z17, 'z18, (&'z19 position::Position, std::option::Option<&'z20 rose_game_common::components::HealthPoints>, std::option::Option<&'z21 ManaPoints>, std::option::Option<&'z22 rose_game_common::components::Stamina>, std::option::Option<&'z23 AbilityValues>, std::option::Option<&'z24 dead::Dead>), bevy::prelude::With<LlmBuddyBot>>, bevy::prelude::Query<'z25, 'z26, &'z27 rose_game_common::components::Inventory>, bevy::prelude::ResMut<'z28, ServerMessages>, bevy::prelude::MessageWriter<'z29, UseItemEvent>, bevy::prelude::MessageWriter<'z30, ChatMessageEvent>, bevy::prelude::Res<'z31, GameData>) {process_llm_bot_commands_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm, 'n> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::Res<'c, GameData>, bevy::prelude::ResMut<'d, LlmBotManagerResource>, bevy::prelude::ResMut<'e, ClientEntityList>, bevy::prelude::Query<'f, 'g, (bevy::prelude::Entity, &'h position::Position, &'i CharacterInfo, &'j ClientEntity), bevy::prelude::Without<LlmBuddyBot>>, bevy::prelude::MessageWriter<'k, PartyEvent>, bevy::prelude::Query<'l, 'm, &'n AbilityValues, bevy::prelude::With<LlmBuddyBot>>) {process_llm_bot_creations_system}), ApplyDeferred, (ScheduleConfigs<Box<(dyn bevy::prelude::System<In = (), Out = ()> + 'static)>>, ScheduleConfigs<Box<(dyn bevy::prelude::System<In = (), Out = ()> + 'static)>>, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, 'k, 'l, 'm, 'n, 'o, 'p, 'q> fn(bevy::prelude::Commands<'a, 'b>, bevy::prelude::MessageReader<'c, 'd, ClanEvent>, bevy::prelude::Query<'e, 'f, MemberQuery<'g>, Changed<ClanMembership>>, bevy::prelude::Query<'h, 'i, MemberQuery<'j>>, bevy::prelude::Query<'k, 'l, CreatorQuery<'m>>, bevy::prelude::Query<'n, 'o, &'p mut game::components::clan::Clan>, bevy::prelude::ResMut<'q, ServerMessages>) {clan_system}, for<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h> fn(bevy::prelude::Query<'a, 'b, (bevy::prelude::Entity, &'c GameClient, &'d position::Position, &'e mut PositionSnapshotTimer)>, bevy::prelude::ResMut<'f, ServerMessages>, bevy::prelude::Res<'g, Time>, bevy::prelude::Res<'h, PositionReconciliationConfig>) {position_reconciliation_system})): Iterator`
+    = note: the full name for the type has been written to 'c:\Users\vicha\RustroverProjects\rose-offline\target\debug\deps\rose_offline_server-f05b48b070a6ad3f.long-type-7114466718451363253.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0609]: no field `client_entity_id` on type `game_server_system::GameClientQueryItem<'_, '_, '_>`
+    --> rose-offline-server\src\game\systems\game_server_system.rs:1092:56
+     |
+1092 | ...                   entity_id: game_client.client_entity_id,
+     |                                              ^^^^^^^^^^^^^^^^ unknown field
+     |
+help: a field with a similar name exists
+     |
+1092 -                                 entity_id: game_client.client_entity_id,
+1092 +                                 entity_id: game_client.client_entity,
+     |
+
+error[E0609]: no field `client_entity_id` on type `game_server_system::GameClientQueryItem<'_, '_, '_>`
+    --> rose-offline-server\src\game\systems\game_server_system.rs:1098:41
+     |
+1098 | ...                   game_client.client_entity_id,
+     |                                   ^^^^^^^^^^^^^^^^ unknown field
+     |
+help: a field with a similar name exists
+     |
+1098 -                             game_client.client_entity_id,
+1098 +                             game_client.client_entity,
+     |
+
+error[E0609]: no field `client_entity_id` on type `game_server_system::GameClientQueryItem<'_, '_, '_>`
+    --> rose-offline-server\src\game\systems\game_server_system.rs:1107:41
+     |
+1107 | ...                   game_client.client_entity_id,
+     |                                   ^^^^^^^^^^^^^^^^ unknown field
+     |
+help: a field with a similar name exists
+     |
+1107 -                             game_client.client_entity_id,
+1107 +                             game_client.client_entity,
+     |
+
+error[E0609]: no field `snapshot_interval_secs` on type `bevy::prelude::Res<'_, PositionReconciliationConfig>`
+  --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:70:42
+   |
+70 |         if snapshot_timer.timer < config.snapshot_interval_secs {
+   |                                          ^^^^^^^^^^^^^^^^^^^^^^ unknown field
+
+error[E0609]: no field `position` on type `&GameClient`
+  --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:81:43
+   |
+81 |         let client_position = game_client.position.position;
+   |                                           ^^^^^^^^ unknown field
+   |
+   = note: available fields are: `client_message_rx`, `server_message_tx`, `login_token`, `world_client_entity`
+
+error[E0599]: no method named `xy` found for struct `bevy::prelude::Vec3` in the current scope
+   --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:84:43
+    |
+ 84 |         let divergence = (server_position.xy() - client_position.xy()).length();
+    |                                           ^^
+    |
+   ::: C:\Users\vicha\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\glam-0.30.10\src\swizzles\vec_traits.rs:111:8
+    |
+111 |     fn xy(self) -> Self::Vec2;
+    |        -- the method is available for `bevy::prelude::Vec3` here
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `Vec3Swizzles` which provides `xy` is implemented but not in scope; perhaps you want to import it
+    |
+  1 + use bevy::prelude::Vec3Swizzles;
+    |
+help: there is a method `xx` with a similar name
+    |
+ 84 -         let divergence = (server_position.xy() - client_position.xy()).length();
+ 84 +         let divergence = (server_position.xx() - client_position.xy()).length();
+    |
+
+error[E0609]: no field `max_divergence_cm` on type `bevy::prelude::Res<'_, PositionReconciliationConfig>`
+  --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:87:32
+   |
+87 |         if divergence > config.max_divergence_cm {
+   |                                ^^^^^^^^^^^^^^^^^ unknown field
+
+error[E0609]: no field `client_entity` on type `&GameClient`
+  --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:90:29
+   |
+90 |                 game_client.client_entity,
+   |                             ^^^^^^^^^^^^^ unknown field
+   |
+   = note: available fields are: `client_message_rx`, `server_message_tx`, `login_token`, `world_client_entity`
+
+error[E0609]: no field `client_entity_id` on type `&GameClient`
+  --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:92:44
+   |
+92 |                     entity_id: game_client.client_entity_id,
+   |                                            ^^^^^^^^^^^^^^^^ unknown field
+   |
+   = note: available fields are: `client_message_rx`, `server_message_tx`, `login_token`, `world_client_entity`
+
+error[E0609]: no field `client_entity_id` on type `&GameClient`
+  --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:99:29
+   |
+99 |                 game_client.client_entity_id,
+   |                             ^^^^^^^^^^^^^^^^ unknown field
+   |
+   = note: available fields are: `client_message_rx`, `server_message_tx`, `login_token`, `world_client_entity`
+
+error[E0609]: no field `max_divergence_cm` on type `bevy::prelude::Res<'_, PositionReconciliationConfig>`
+   --> rose-offline-server\src\game\systems\position_reconciliation_system.rs:101:24
+    |
+101 |                 config.max_divergence_cm,
+    |                        ^^^^^^^^^^^^^^^^^ unknown field
 
 warning: unused variable: `time`
   --> rose-offline-server\src\game\bots\bot_snowball_fight.rs:35:5
@@ -643,12 +870,6 @@ warning: unused variable: `time`
     |
 222 |         time: &Time,
     |         ^^^^ help: if this is intentional, prefix it with an underscore: `_time`
-
-warning: unused variable: `command_sender`
-  --> rose-offline-server\src\game\game_world.rs:98:13
-   |
-98 |         let command_sender = if let Some(manager) = &self.llm_bot_manager {
-   |             ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_command_sender`
 
 warning: variable does not need to be mutable
     --> rose-offline-server\src\game\systems\chat_commands_system.rs:1448:17
@@ -913,45 +1134,13 @@ warning: variable does not need to be mutable
     |                                   |
     |                                   help: remove this `mut`
 
-warning: unused variable: `old_position`
-  --> rose-offline-server\src\game\systems\update_position_system.rs:33:17
-   |
-33 |             let old_position = position.position;
-   |                 ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_old_position`
-
 warning: unused variable: `query`
    --> rose-offline-server\src\game\api\handlers.rs:557:11
     |
 557 |     Query(query): Query<NearbyQuery>,
     |           ^^^^^ help: if this is intentional, prefix it with an underscore: `_query`
 
-warning: `rose-offline-server` (lib) generated 106 warnings (run `cargo fix --lib -p rose-offline-server` to apply 103 suggestions)
-warning: unused imports: `ActiveStatusEffect`, `DamageCategory`, `DamageType`, `EquipmentItemReference`, `HotbarSlot`, `InventoryPageType`, `InventoryPage`, and `SkillPage`
-  --> rose-offline-server\src\game\components\mod.rs:41:33
-   |
-41 |     AbilityValues, ActiveQuest, ActiveStatusEffect, ActiveStatusEffectRegen, BasicStatType,
-   |                                 ^^^^^^^^^^^^^^^^^^
-42 |     BasicStats, CharacterDeleteTime, CharacterGender, CharacterInfo, CharacterUniqueId,
-43 |     DamageCategory, DamageType, DroppedItem, Equipment, EquipmentItemDatabase,
-   |     ^^^^^^^^^^^^^^  ^^^^^^^^^^
-44 |     EquipmentItemReference, ExperiencePoints, HealthPoints, Hotbar, HotbarSlot, Inventory,
-   |     ^^^^^^^^^^^^^^^^^^^^^^                                          ^^^^^^^^^^
-45 |     InventoryPage, InventoryPageType, ItemDrop, ItemSlot, Level, ManaPoints, Money, MoveMode,
-   |     ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^
-46 |     MoveSpeed, Npc, QuestState, SkillList, SkillPage, SkillPoints, SkillSlot, Stamina, StatPoints,
-   |                                            ^^^^^^^^^
-
-warning: unused import: `MAX_CHAT_MESSAGES`
-  --> rose-offline-server\src\game\components\mod.rs:68:78
-   |
-68 | pub use llm_buddy_bot::{BotBehaviorMode, ChatMessage, ChatType, LlmBuddyBot, MAX_CHAT_MESSAGES};
-   |                                                                              ^^^^^^^^^^^^^^^^^
-
-warning: unused imports: `MotionDataCharacter` and `MotionDataNpc`
-  --> rose-offline-server\src\game\components\mod.rs:71:35
-   |
-71 | pub use motion_data::{MotionData, MotionDataCharacter, MotionDataNpc};
-   |                                   ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^
-
-warning: `rose-offline-server` (bin "rose-offline-server") generated 106 warnings (103 duplicates) (run `cargo fix --bin "rose-offline-server" -p rose-offline-server` to apply 3 suggestions)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 14.78s
+Some errors have detailed explanations: E0277, E0425, E0599, E0609.
+For more information about an error, try `rustc --explain E0277`.
+warning: `rose-offline-server` (lib) generated 107 warnings
+error: could not compile `rose-offline-server` (lib) due to 16 previous errors; 107 warnings emitted

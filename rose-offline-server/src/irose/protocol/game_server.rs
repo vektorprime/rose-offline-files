@@ -857,6 +857,7 @@ impl GameServer {
                 entity_id,
                 status_effects,
                 updated_values,
+                regen_effects,
             } => {
                 client
                     .connection
@@ -864,6 +865,10 @@ impl GameServer {
                         entity_id,
                         status_effects,
                         updated_values,
+                        regen_effects: rose_game_common::components::StatusEffectsRegen {
+                            regens: regen_effects,
+                            per_second_tick_counter: std::time::Duration::ZERO,
+                        },
                     }))
                     .await?;
             }
@@ -1286,6 +1291,27 @@ impl GameServer {
                     }))
                     .await?;
             }
+            ServerMessage::UpdateCooldown { skill_id, duration } => {
+                client
+                    .connection
+                    .write_packet(Packet::from(&PacketServerUpdateCooldown {
+                        skill_id,
+                        duration,
+                    }))
+                    .await?;
+            }
+            ServerMessage::UpdateConsumableCooldown {
+                cooldown_group,
+                duration,
+            } => {
+                client
+                    .connection
+                    .write_packet(Packet::from(&PacketServerUpdateConsumableCooldown {
+                        cooldown_group,
+                        duration,
+                    }))
+                    .await?;
+            }
             ServerMessage::NpcStoreTransactionError { error } => {
                 client
                     .connection
@@ -1674,7 +1700,8 @@ impl GameServer {
             | ServerMessage::DeleteCharacterError { .. }
             | ServerMessage::SelectCharacterSuccess { .. }
             | ServerMessage::SelectCharacterError
-            | ServerMessage::UpdateSkillList { .. } => {
+            | ServerMessage::UpdateSkillList { .. }
+            | ServerMessage::UpdateAbilityValues { .. } => {
                 panic!("Received unexpected server message for game server")
             }
         }

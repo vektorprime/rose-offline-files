@@ -43,62 +43,63 @@ pub fn passive_recovery_system(
         mut mana_points,
     ) in query.iter_mut()
     {
-        passive_recovery_time.time += time.delta();
+        // COMMENTED OUT: Auto-regen disabled, only keep consumable-based restoration
+        // passive_recovery_time.time += time.delta();
 
-        if passive_recovery_time.time > RECOVERY_INTERVAL {
-            passive_recovery_time.time -= RECOVERY_INTERVAL;
+        // if passive_recovery_time.time > RECOVERY_INTERVAL {
+        //     passive_recovery_time.time -= RECOVERY_INTERVAL;
 
-            if health_points.hp == 0 {
-                // No recovery from dead
-                continue;
-            }
+        //     if health_points.hp == 0 {
+        //         // No recovery from dead
+        //         continue;
+        //     }
 
-            if ability_values.is_driving {
-                // No recovery whilst driving
-                continue;
-            }
+        //     if ability_values.is_driving {
+        //         // No recovery whilst driving
+        //         continue;
+        //     }
 
-            let recovery_state = if command.is_sit() {
-                PassiveRecoveryState::Sitting
-            } else {
-                PassiveRecoveryState::Normal
-            };
+        //     let recovery_state = if command.is_sit() {
+        //         PassiveRecoveryState::Sitting
+        //     } else {
+        //         PassiveRecoveryState::Normal
+        //     };
 
-            let recover_hp = game_data
-                .ability_value_calculator
-                .calculate_passive_recover_hp(ability_values, recovery_state);
-            let recover_mp = game_data
-                .ability_value_calculator
-                .calculate_passive_recover_mp(ability_values, recovery_state);
+        //     let recover_hp = game_data
+        //         .ability_value_calculator
+        //         .calculate_passive_recover_hp(ability_values, recovery_state);
+        //     let recover_mp = game_data
+        //         .ability_value_calculator
+        //         .calculate_passive_recover_mp(ability_values, recovery_state);
 
-            let previous_hp = health_points.hp;
-            let previous_mp = mana_points.mp;
+        //     let previous_hp = health_points.hp;
+        //     let previous_mp = mana_points.mp;
 
-            health_points.hp = i32::min(
-                health_points.hp + recover_hp,
-                ability_values.get_max_health(),
-            );
-            mana_points.mp = i32::min(mana_points.mp + recover_mp, ability_values.get_max_mana());
+        //     health_points.hp = i32::min(
+        //         health_points.hp + recover_hp,
+        //         ability_values.get_max_health(),
+        //     );
+        //     mana_points.mp = i32::min(mana_points.mp + recover_mp, ability_values.get_max_mana());
 
-            if health_points.hp != previous_hp {
-                server_messages.send_entity_message(
-                    client_entity,
-                    ServerMessage::UpdateHealthPoints {
-                        entity_id: client_entity.id,
-                        hp: health_points.hp,
-                    },
-                );
-            }
+        //     if health_points.hp != previous_hp {
+        //         server_messages.send_entity_message(
+        //             client_entity,
+        //             ServerMessage::UpdateHealthPoints {
+        //                 entity_id: client_entity.id,
+        //                 hp: health_points.hp,
+        //             },
+        //         );
+        //     }
 
-            if mana_points.mp != previous_mp {
-                server_messages.send_entity_message(
-                    client_entity,
-                    ServerMessage::UpdateManaPoints {
-                        entity_id: client_entity.id,
-                        mp: mana_points.mp,
-                    },
-                );
-            }
-        }
+        //     if mana_points.mp != previous_mp {
+        //         server_messages.send_entity_message(
+        //             client_entity,
+        //             ServerMessage::UpdateManaPoints {
+        //                 entity_id: client_entity.id,
+        //                 mp: mana_points.mp,
+        //             },
+        //         );
+        //     }
+        // }
     }
 }

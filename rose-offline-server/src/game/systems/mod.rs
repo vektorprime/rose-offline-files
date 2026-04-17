@@ -24,6 +24,7 @@ mod party_system;
 mod passive_recovery_system;
 mod personal_store_system;
 mod pickup_item_system;
+mod position_reconciliation_system;
 mod quest_system;
 mod restore_llm_bots_system;
 mod revive_event_system;
@@ -78,6 +79,10 @@ pub use party_system::{
 pub use passive_recovery_system::passive_recovery_system;
 pub use personal_store_system::personal_store_system;
 pub use pickup_item_system::pickup_item_system;
+pub use position_reconciliation_system::{
+    add_position_snapshot_timer_system, position_reconciliation_system,
+    PositionReconciliationConfig, PositionSnapshotTimer,
+};
 pub use quest_system::quest_system;
 pub use restore_llm_bots_system::restore_llm_buddy_bots_system;
 pub use revive_event_system::revive_event_system;

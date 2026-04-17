@@ -3,7 +3,7 @@ use bevy::{
         prelude::{MessageReader, Query},
         query::QueryData,
     },
-    prelude::Mut,
+    prelude::{Mut, Vec3Swizzles},
 };
 
 use rose_data::{Item, ItemSlotBehaviour};
@@ -13,16 +13,19 @@ use rose_game_common::{
 };
 
 use crate::game::{
-    components::{ClientEntity, GameClient, Inventory, PersonalStore},
+    components::{ClientEntity, GameClient, Inventory, PersonalStore, Position},
     events::PersonalStoreEvent,
     messages::server::ServerMessage,
 };
+
+const PERSONAL_STORE_MAX_DISTANCE: f32 = 6000.0;
 
 #[derive(QueryData)]
 #[query_data(mutable)]
 pub struct PersonalStoreEntityQuery<'w> {
     client_entity: &'w ClientEntity,
     inventory: &'w mut Inventory,
+    position: &'w Position,
     game_client: Option<&'w GameClient>,
 }
 
@@ -31,6 +34,18 @@ fn personal_store_list_items(
     seller: &PersonalStoreEntityQueryReadOnlyItem,
     buyer: &PersonalStoreEntityQueryReadOnlyItem,
 ) {
+    // Validate distance between buyer and seller
+    if seller.position.zone_id != buyer.position.zone_id
+        || seller
+            .position
+            .position
+            .xy()
+            .distance(buyer.position.position.xy())
+            > PERSONAL_STORE_MAX_DISTANCE
+    {
+        return;
+    }
+
     let mut buy_items = Vec::new();
     let mut sell_items = Vec::new();
 
@@ -64,6 +79,7 @@ enum BuyError {
     ItemSoldOut,
     NotEnoughMoney,
     InventoryFull,
+    TooFarAway,
 }
 
 fn personal_store_buy_item(
@@ -73,6 +89,18 @@ fn personal_store_buy_item(
     store_slot_index: usize,
     buy_item: &Item,
 ) -> Result<(ItemSlot, ItemSlot), BuyError> {
+    // Validate distance between buyer and seller
+    if seller.position.zone_id != buyer.position.zone_id
+        || seller
+            .position
+            .position
+            .xy()
+            .distance(buyer.position.position.xy())
+            > PERSONAL_STORE_MAX_DISTANCE
+    {
+        return Err(BuyError::TooFarAway);
+    }
+
     // Try get the item from the personal store
     let (store_item_slot, item_price) = store
         .sell_items
@@ -238,7 +266,8 @@ pub fn personal_store_system(
                             }
                             Err(BuyError::InvalidStoreSlotIndex)
                             | Err(BuyError::InventoryFull)
-                            | Err(BuyError::NotEnoughMoney) => {
+                            | Err(BuyError::NotEnoughMoney)
+                            | Err(BuyError::TooFarAway) => {
                                 if let Some(buyer_game_client) = buyer.game_client {
                                     buyer_game_client
                                         .server_message_tx

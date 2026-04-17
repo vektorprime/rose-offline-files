@@ -21,8 +21,8 @@ use crate::game::{
         skill_list_try_learn_skill, SkillListBundle,
     },
     components::{
-        AbilityValues, BasicStats, CharacterInfo, ClientEntity, ClientEntitySector,
-        Cooldowns, ExperiencePoints, GameClient, Inventory, ItemSlot, Level, MoveSpeed, NextCommand, Position,
+        AbilityValues, BasicStats, CharacterInfo, ClientEntity, ClientEntitySector, Cooldowns,
+        ExperiencePoints, GameClient, Inventory, ItemSlot, Level, MoveSpeed, NextCommand, Position,
         SkillList, SkillPoints, Stamina, StatPoints, StatusEffects, StatusEffectsRegen, Team,
         UnionMembership,
     },
@@ -76,14 +76,36 @@ enum UseItemError {
     Cooldown,
 }
 
+fn apply_item_effect_by_number(
+    use_item_system_parameters: &mut UseItemSystemParameters,
+    use_item_user: &mut UseItemUserQueryItem,
+    item_number: usize,
+) {
+    // Get item data inside this function so we control the borrow
+    if let Some(item_data) = use_item_system_parameters
+        .game_data
+        .items
+        .get_consumable_item(item_number)
+    {
+        apply_item_effect(use_item_system_parameters, use_item_user, item_data);
+    }
+}
+
 fn apply_item_effect(
     use_item_system_parameters: &UseItemSystemParameters,
     use_item_user: &mut UseItemUserQueryItem,
     item_data: &rose_data::ConsumableItemData,
 ) {
-    log::info!("[USE_ITEM] Applying item effect for item: {:?}", item_data);
+    log::info!(
+        "[USE_ITEM] Applying item effect for item: {:?}",
+        item_data.item_data
+    );
     if let Some((base_status_effect_id, total_potion_value)) = item_data.apply_status_effect {
-        log::info!("[USE_ITEM] Item has apply_status_effect: id={:?}, value={}", base_status_effect_id, total_potion_value);
+        log::info!(
+            "[USE_ITEM] Item has apply_status_effect: id={:?}, value={}",
+            base_status_effect_id,
+            total_potion_value
+        );
         if let Some(base_status_effect) = use_item_system_parameters
             .game_data
             .status_effects
@@ -106,8 +128,7 @@ fn apply_item_effect(
                 {
                     let expire_time = Instant::now()
                         + Duration::from_micros(
-                            total_potion_value as u64 * 1000000
-                                / potion_value_per_second as u64,
+                            total_potion_value as u64 * 1000000 / potion_value_per_second as u64,
                         );
                     log::info!("[USE_ITEM] Applying potion: effect_id={}, total_value={}, value_per_sec={}, expire_time={:?}, status_effect_type={:?}",
                         status_effect_data.id.get(), total_potion_value, potion_value_per_second, expire_time, status_effect_data.status_effect_type);
@@ -119,10 +140,19 @@ fn apply_item_effect(
                         potion_value_per_second,
                     );
                     log::info!("[USE_ITEM] apply_potion result: {}", result);
-                    log::info!("[USE_ITEM] StatusEffects after apply: {:?}", use_item_user.status_effects.active);
-                    log::info!("[USE_ITEM] StatusEffectsRegen after apply: {:?}", use_item_user.status_effects_regen.regens);
+                    log::info!(
+                        "[USE_ITEM] StatusEffects after apply: {:?}",
+                        use_item_user.status_effects.active
+                    );
+                    log::info!(
+                        "[USE_ITEM] StatusEffectsRegen after apply: {:?}",
+                        use_item_user.status_effects_regen.regens
+                    );
                 } else {
-                    log::warn!("[USE_ITEM] can_apply returned false for effect_id={}", status_effect_data.id.get());
+                    log::warn!(
+                        "[USE_ITEM] can_apply returned false for effect_id={}",
+                        status_effect_data.id.get()
+                    );
                 }
             }
         }
@@ -208,7 +238,12 @@ fn use_inventory_item(
         .try_take_quantity(item_slot, 1)
         .ok_or(UseItemError::InvalidItem)?;
 
-    let (consume_item, message_to_nearby) = match item_data.item_data.class {
+    // Clone necessary fields before the match to avoid borrow conflicts
+    let item_class = item_data.item_data.class;
+    let cooldown_type_id = item_data.cooldown_type_id;
+    let cooldown_duration = item_data.cooldown_duration;
+
+    let (consume_item, message_to_nearby) = match item_class {
         ItemClass::MagicItem => {
             if let Some((skill_id, skill_data)) = item_data.use_skill_id.and_then(|skill_id| {
                 use_item_system_parameters
@@ -236,7 +271,10 @@ fn use_inventory_item(
                             Some((item_slot, item.clone())),
                         ));
                     (false, false)
-                } else if matches!(skill_data.skill_type, SkillType::Immediate | SkillType::AreaTarget) {
+                } else if matches!(
+                    skill_data.skill_type,
+                    SkillType::Immediate | SkillType::AreaTarget
+                ) {
                     // For Immediate and AreaTarget skills, cast at caster's position without requiring a target
                     // This handles scrolls that do damage to nearby monsters
                     use_item_system_parameters
@@ -257,7 +295,7 @@ fn use_inventory_item(
                                 .get_zone(use_item_user.position.zone_id)
                                 .map(|zone| zone.planet)
                                 .unwrap_or(0);
-                            
+
                             if current_planet != required_planet.get() {
                                 // Return item to inventory since we can't use it
                                 let _ = use_item_user
@@ -363,10 +401,13 @@ fn use_inventory_item(
             // Repair tool: repair an equipped item
             if let Some(repair_item_slot) = _repair_item_slot {
                 if let ItemSlot::Equipment(equipment_index) = repair_item_slot {
-                    if let Some(equipment_item) = use_item_user.equipment.get_equipment_item_mut(equipment_index) {
+                    if let Some(equipment_item) = use_item_user
+                        .equipment
+                        .get_equipment_item_mut(equipment_index)
+                    {
                         // Restore item durability to maximum (1000)
                         equipment_item.life = 1000;
-                        
+
                         if let Some(game_client) = use_item_user.game_client {
                             game_client
                                 .server_message_tx
@@ -376,7 +417,7 @@ fn use_inventory_item(
                                 })
                                 .ok();
                         }
-                        
+
                         (true, false)
                     } else {
                         (false, false)
@@ -393,12 +434,12 @@ fn use_inventory_item(
         ItemClass::TimeCoupon => {
             warn!(
                 "Unimplemented use item ItemClass {:?} with item {:?}",
-                item_data.item_data.class, item
+                item_class, item
             );
             (false, false)
         }
         _ => {
-            apply_item_effect(use_item_system_parameters, use_item_user, item_data);
+            apply_item_effect_by_number(use_item_system_parameters, use_item_user, item.get_item_number() as usize);
             (true, true)
         }
     };
@@ -406,9 +447,23 @@ fn use_inventory_item(
     if consume_item {
         // Set the item cooldown after successful use
         if let Some(ref mut cooldowns) = use_item_user.cooldowns {
-            cooldowns.set_item_cooldown(item_data.cooldown_type_id, item_data.cooldown_duration);
+            cooldowns.set_item_cooldown(cooldown_type_id, cooldown_duration);
         }
-        
+
+        // Send UpdateConsumableCooldown message to the client for server-authoritative cooldown tracking
+        // The cooldown_type_id is a usize that maps to the ConsumableCooldownGroup enum indices:
+        // 0 = HealthRecovery, 1 = ManaRecovery, 2 = MagicItem, 3 = Others
+        if let Some(game_client) = use_item_user.game_client {
+            let cooldown_group = cooldown_type_id as u8;
+            game_client
+                .server_message_tx
+                .send(ServerMessage::UpdateConsumableCooldown {
+                    cooldown_group,
+                    duration: cooldown_duration,
+                })
+                .ok();
+        }
+
         if let Some(game_client) = use_item_user.game_client {
             if message_to_nearby {
                 use_item_system_parameters
@@ -481,16 +536,36 @@ pub fn use_item_system(
             }
             UseItemEvent::Item { entity, ref item } => {
                 if let Ok(mut use_item_user) = query_user.get_mut(entity) {
-                    if let Some(item_data) = use_item_system_parameters
+                    let item_number = item.get_item_number() as usize;
+                    // Check if item exists first without holding a borrow
+                    let has_item = use_item_system_parameters
                         .game_data
                         .items
-                        .get_consumable_item(item.get_item_number())
-                    {
-                        apply_item_effect(
-                            &use_item_system_parameters,
+                        .get_consumable_item(item_number)
+                        .is_some();
+
+                    if has_item {
+                        apply_item_effect_by_number(
+                            &mut use_item_system_parameters,
                             &mut use_item_user,
-                            item_data,
+                            item_number,
                         );
+
+                        // Send UpdateStatusEffects to client
+                        use_item_system_parameters
+                            .server_messages
+                            .send_entity_message(
+                                use_item_user.client_entity,
+                                ServerMessage::UpdateStatusEffects {
+                                    entity_id: use_item_user.client_entity.id,
+                                    status_effects: use_item_user.status_effects.active.clone(),
+                                    updated_values: Vec::new(),
+                                    regen_effects: use_item_user
+                                        .status_effects_regen
+                                        .regens
+                                        .clone(),
+                                },
+                            );
 
                         use_item_system_parameters
                             .server_messages

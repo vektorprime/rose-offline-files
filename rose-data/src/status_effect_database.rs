@@ -51,6 +51,51 @@ pub enum StatusEffectType {
 
 #[allow(dead_code)]
 impl StatusEffectType {
+    pub fn index(&self) -> usize {
+        *self as usize
+    }
+
+    pub fn from_index(index: usize) -> Option<Self> {
+        match index {
+            0 => Some(StatusEffectType::IncreaseHp),
+            1 => Some(StatusEffectType::IncreaseMp),
+            2 => Some(StatusEffectType::Poisoned),
+            3 => Some(StatusEffectType::IncreaseMaxHp),
+            4 => Some(StatusEffectType::IncreaseMaxMp),
+            5 => Some(StatusEffectType::IncreaseMoveSpeed),
+            6 => Some(StatusEffectType::DecreaseMoveSpeed),
+            7 => Some(StatusEffectType::IncreaseAttackSpeed),
+            8 => Some(StatusEffectType::DecreaseAttackSpeed),
+            9 => Some(StatusEffectType::IncreaseAttackPower),
+            10 => Some(StatusEffectType::DecreaseAttackPower),
+            11 => Some(StatusEffectType::IncreaseDefence),
+            12 => Some(StatusEffectType::DecreaseDefence),
+            13 => Some(StatusEffectType::IncreaseResistance),
+            14 => Some(StatusEffectType::DecreaseResistance),
+            15 => Some(StatusEffectType::IncreaseHit),
+            16 => Some(StatusEffectType::DecreaseHit),
+            17 => Some(StatusEffectType::IncreaseCritical),
+            18 => Some(StatusEffectType::DecreaseCritical),
+            19 => Some(StatusEffectType::IncreaseAvoid),
+            20 => Some(StatusEffectType::DecreaseAvoid),
+            21 => Some(StatusEffectType::Dumb),
+            22 => Some(StatusEffectType::Sleep),
+            23 => Some(StatusEffectType::Fainting),
+            24 => Some(StatusEffectType::Disguise),
+            25 => Some(StatusEffectType::Transparent),
+            26 => Some(StatusEffectType::ShieldDamage),
+            27 => Some(StatusEffectType::AdditionalDamageRate),
+            28 => Some(StatusEffectType::DecreaseLifeTime),
+            29 => Some(StatusEffectType::ClearGood),
+            30 => Some(StatusEffectType::ClearBad),
+            31 => Some(StatusEffectType::ClearAll),
+            32 => Some(StatusEffectType::ClearInvisible),
+            33 => Some(StatusEffectType::Taunt),
+            34 => Some(StatusEffectType::Revive),
+            _ => None,
+        }
+    }
+
     pub fn is_bad(&self) -> bool {
         matches!(
             *self,

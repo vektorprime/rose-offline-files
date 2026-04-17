@@ -106,9 +106,12 @@ pub enum ServerPackets {
     UpdateStatusEffects = 0x7b7,
     UpdateSpeed = 0x7b8,
     FinishCastingSkill = 0x7b9,
-    StartCastingSkill = 0x7bb,
-    CraftItem = 0x7bc,
-    CancelCastingSkill = 0x7bd,
+    UpdateCooldown = 0x7ba,
+    UpdateConsumableCooldown = 0x7bb,
+    StartCastingSkill = 0x7bc,
+    CraftItem = 0x7bd,
+    CancelCastingSkill = 0x7be,
+    UpdateAbilityValues = 0x7bf,
     OpenPersonalStore = 0x7c2,
     ClosePersonalStore = 0x7c3,
     PersonalStoreItemList = 0x7c4,
@@ -3275,6 +3278,138 @@ impl From<&PacketServerFinishCastingSkill> for Packet {
     }
 }
 
+pub struct PacketServerUpdateCooldown {
+    pub skill_id: SkillId,
+    pub duration: Duration,
+}
+
+impl TryFrom<&Packet> for PacketServerUpdateCooldown {
+    type Error = PacketError;
+
+    fn try_from(packet: &Packet) -> Result<Self, PacketError> {
+        if packet.command != ServerPackets::UpdateCooldown as u16 {
+            return Err(PacketError::InvalidPacket);
+        }
+
+        let mut reader = PacketReader::from(packet);
+        let skill_id = SkillId::new(reader.read_u16()?).ok_or(PacketError::InvalidPacket)?;
+        let duration = Duration::from_millis(reader.read_u32()? as u64);
+
+        Ok(Self { skill_id, duration })
+    }
+}
+
+impl From<&PacketServerUpdateCooldown> for Packet {
+    fn from(packet: &PacketServerUpdateCooldown) -> Self {
+        let mut writer = PacketWriter::new(ServerPackets::UpdateCooldown as u16);
+        writer.write_u16(packet.skill_id.get());
+        writer.write_u32(packet.duration.as_millis() as u32);
+        writer.into()
+    }
+}
+
+pub struct PacketServerUpdateConsumableCooldown {
+    pub cooldown_group: u8,
+    pub duration: Duration,
+}
+
+impl TryFrom<&Packet> for PacketServerUpdateConsumableCooldown {
+    type Error = PacketError;
+
+    fn try_from(packet: &Packet) -> Result<Self, PacketError> {
+        if packet.command != ServerPackets::UpdateConsumableCooldown as u16 {
+            return Err(PacketError::InvalidPacket);
+        }
+
+        let mut reader = PacketReader::from(packet);
+        let cooldown_group = reader.read_u8()?;
+        let duration = Duration::from_millis(reader.read_u32()? as u64);
+
+        Ok(Self {
+            cooldown_group,
+            duration,
+        })
+    }
+}
+
+impl From<&PacketServerUpdateConsumableCooldown> for Packet {
+    fn from(packet: &PacketServerUpdateConsumableCooldown) -> Self {
+        let mut writer = PacketWriter::new(ServerPackets::UpdateConsumableCooldown as u16);
+        writer.write_u8(packet.cooldown_group);
+        writer.write_u32(packet.duration.as_millis() as u32);
+        writer.into()
+    }
+}
+
+pub struct PacketServerUpdateAbilityValues {
+    pub entity_id: ClientEntityId,
+    pub attack_power: i32,
+    pub defence: i32,
+    pub hit: i32,
+    pub resistance: i32,
+    pub avoid: i32,
+    pub attack_speed: i32,
+    pub critical: i32,
+    pub max_health: i32,
+    pub max_mana: i32,
+    pub move_speed: i32,
+}
+
+impl TryFrom<&Packet> for PacketServerUpdateAbilityValues {
+    type Error = PacketError;
+
+    fn try_from(packet: &Packet) -> Result<Self, Self::Error> {
+        if packet.command != ServerPackets::UpdateAbilityValues as u16 {
+            return Err(PacketError::InvalidPacket);
+        }
+
+        let mut reader = PacketReader::from(packet);
+        let entity_id = reader.read_entity_id()?;
+        let attack_power = reader.read_i32()?;
+        let defence = reader.read_i32()?;
+        let hit = reader.read_i32()?;
+        let resistance = reader.read_i32()?;
+        let avoid = reader.read_i32()?;
+        let attack_speed = reader.read_i32()?;
+        let critical = reader.read_i32()?;
+        let max_health = reader.read_i32()?;
+        let max_mana = reader.read_i32()?;
+        let move_speed = reader.read_i32()?;
+
+        Ok(Self {
+            entity_id,
+            attack_power,
+            defence,
+            hit,
+            resistance,
+            avoid,
+            attack_speed,
+            critical,
+            max_health,
+            max_mana,
+            move_speed,
+        })
+    }
+}
+
+impl From<&PacketServerUpdateAbilityValues> for Packet {
+    fn from(packet: &PacketServerUpdateAbilityValues) -> Self {
+        let mut writer = PacketWriter::new(ServerPackets::UpdateAbilityValues as u16);
+        writer.write_entity_id(packet.entity_id);
+        writer.write_i32(packet.attack_power);
+        writer.write_i32(packet.defence);
+        writer.write_i32(packet.hit);
+        writer.write_i32(packet.resistance);
+        writer.write_i32(packet.avoid);
+        writer.write_i32(packet.attack_speed);
+        writer.write_i32(packet.critical);
+        writer.write_i32(packet.max_health);
+        writer.write_i32(packet.max_mana);
+        writer.write_i32(packet.move_speed);
+        writer.into()
+    }
+}
+
 pub struct PacketServerUpdateSpeed {
     pub entity_id: ClientEntityId,
     pub run_speed: i32,
@@ -3318,6 +3453,7 @@ pub struct PacketServerUpdateStatusEffects {
     pub entity_id: ClientEntityId,
     pub status_effects: ActiveStatusEffects,
     pub updated_values: Vec<i32>,
+    pub regen_effects: rose_game_common::components::StatusEffectsRegen,
 }
 
 impl TryFrom<&Packet> for PacketServerUpdateStatusEffects {
@@ -3334,15 +3470,41 @@ impl TryFrom<&Packet> for PacketServerUpdateStatusEffects {
         let mut status_effects = ActiveStatusEffects::default();
         reader.read_status_effects_flags_u32(&mut status_effects)?;
 
+        // Read updated values count
+        let updated_values_count = reader.read_u32()? as usize;
         let mut updated_values = Vec::new();
-        while let Ok(value) = reader.read_i32() {
-            updated_values.push(value);
+        for _ in 0..updated_values_count {
+            updated_values.push(reader.read_i32()?);
+        }
+
+        // Read regen effects count
+        let regen_count = reader.read_u32()? as usize;
+        let mut regen_effects = rose_game_common::components::StatusEffectsRegen::default();
+
+        for _ in 0..regen_count {
+            let effect_type_idx = reader.read_u32()? as usize;
+            let total_value = reader.read_i32()?;
+            let value_per_second = reader.read_i32()?;
+            let applied_value = reader.read_i32()?;
+            let applied_duration_secs = reader.read_u64()?;
+
+            let effect_type = rose_data::StatusEffectType::from_index(effect_type_idx)
+                .ok_or(PacketError::InvalidPacket)?;
+
+            regen_effects.regens[effect_type] =
+                Some(rose_game_common::components::ActiveStatusEffectRegen {
+                    total_value,
+                    value_per_second,
+                    applied_value,
+                    applied_duration: std::time::Duration::from_secs(applied_duration_secs),
+                });
         }
 
         Ok(Self {
             entity_id,
             status_effects,
             updated_values,
+            regen_effects,
         })
     }
 }
@@ -3353,8 +3515,29 @@ impl From<&PacketServerUpdateStatusEffects> for Packet {
         writer.write_entity_id(packet.entity_id);
         writer.write_status_effects_flags_u32(&packet.status_effects);
 
+        // Write updated values count
+        writer.write_u32(packet.updated_values.len() as u32);
         for value in packet.updated_values.iter() {
             writer.write_i32(*value);
+        }
+
+        // Write regen effects
+        let regen_count = packet
+            .regen_effects
+            .regens
+            .iter()
+            .filter(|(_, regen)| regen.is_some())
+            .count();
+        writer.write_u32(regen_count as u32);
+
+        for (effect_type, regen) in packet.regen_effects.regens.iter() {
+            if let Some(regen) = regen {
+                writer.write_u32(effect_type.index() as u32);
+                writer.write_i32(regen.total_value);
+                writer.write_i32(regen.value_per_second);
+                writer.write_i32(regen.applied_value);
+                writer.write_u64(regen.applied_duration.as_secs());
+            }
         }
 
         writer.into()

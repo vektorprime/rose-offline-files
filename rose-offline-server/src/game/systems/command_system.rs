@@ -1,19 +1,26 @@
 use std::time::{Duration, Instant};
 
-use bevy::{ecs::query::QueryData, prelude::{Commands, Entity, MessageWriter, Query, Res, ResMut}, math::{Vec3, Vec3Swizzles}, time::Time};
+use bevy::{
+    ecs::query::QueryData,
+    math::{Vec3, Vec3Swizzles},
+    prelude::{Commands, Entity, MessageWriter, Query, Res, ResMut},
+    time::Time,
+};
 
 use rose_data::{
-    AbilityType, AmmoIndex, EquipmentIndex, ItemClass, SkillActionMode, SkillCooldown, SkillId, SkillTargetFilter, SkillType, VehiclePartIndex,
+    AbilityType, AmmoIndex, EquipmentIndex, ItemClass, SkillActionMode, SkillCooldown, SkillId,
+    SkillTargetFilter, SkillType, VehiclePartIndex,
 };
 use rose_game_common::components::{CharacterGender, CharacterInfo};
 
 use crate::game::{
     bundles::GLOBAL_SKILL_COOLDOWN,
     components::{
-        AbilityValues, ClientEntity, ClientEntitySector, ClientEntityType, ClanMembership, Command,
-        CommandCastSkillTarget, CommandData, Cooldowns, Equipment, ExperiencePoints, GameClient, HealthPoints, Inventory,
-        ItemDrop, ManaPoints, MotionData, MoveMode, MoveSpeed, NextCommand, Npc, Owner, PartyMembership, PartyOwner,
-        PersonalStore, Position, Stamina, Team,
+        AbilityValues, ClanMembership, ClientEntity, ClientEntitySector, ClientEntityType, Command,
+        CommandCastSkillTarget, CommandData, Cooldowns, Equipment, ExperiencePoints, GameClient,
+        HealthPoints, Inventory, ItemDrop, ManaPoints, MotionData, MoveMode, MoveSpeed,
+        NextCommand, Npc, Owner, PartyMembership, PartyOwner, PersonalStore, Position, Stamina,
+        Team,
     },
     events::{
         DamageEvent, ItemLifeEvent, PickupItemEvent, SkillEvent, SkillEventTarget, UseAmmoEvent,
@@ -207,23 +214,24 @@ fn check_skill_target_filter(
             let caster_party_id = caster_party.and_then(|p| p.party);
             let target_party_id = target_party.and_then(|p| p.party);
             target_is_alive
-                && (target_is_caster || (caster_party_id.is_some() && caster_party_id == target_party_id))
+                && (target_is_caster
+                    || (caster_party_id.is_some() && caster_party_id == target_party_id))
         }
         SkillTargetFilter::Guild => {
             let caster_clan_id = caster_clan.and_then(|c| c.clan());
             let target_clan_id = target_clan.and_then(|c| c.clan());
             target_is_alive
-                && (target_is_caster || (caster_clan_id.is_some() && caster_clan_id == target_clan_id))
+                && (target_is_caster
+                    || (caster_clan_id.is_some() && caster_clan_id == target_clan_id))
         }
         SkillTargetFilter::Allied => {
-            target_is_alive && (caster_team.id == target_team.id || target_team.id == Team::DEFAULT_CHARACTER_TEAM_ID || target_team.id == Team::DEFAULT_NPC_TEAM_ID)
+            target_is_alive
+                && (caster_team.id == target_team.id
+                    || target_team.id == Team::DEFAULT_CHARACTER_TEAM_ID
+                    || target_team.id == Team::DEFAULT_NPC_TEAM_ID)
         }
         SkillTargetFilter::Monster => {
-            target_is_alive
-                && matches!(
-                    target_client_entity.entity_type,
-                    ClientEntityType::Monster
-                )
+            target_is_alive && matches!(target_client_entity.entity_type, ClientEntityType::Monster)
         }
         SkillTargetFilter::Enemy => {
             target_is_alive
@@ -264,10 +272,7 @@ fn check_skill_target_filter(
         SkillTargetFilter::EnemyMonster => {
             target_is_alive
                 && caster_team.id != target_team.id
-                && matches!(
-                    target_client_entity.entity_type,
-                    ClientEntityType::Monster
-                )
+                && matches!(target_client_entity.entity_type, ClientEntityType::Monster)
         }
     }
 }
@@ -623,22 +628,20 @@ pub fn command_system(
                                     target_team,
                                     target_clan_membership,
                                     target_party_membership,
-                                )) => {
-                                    check_skill_target_filter(
-                                        caster_entity,
-                                        caster_team,
-                                        caster_clan_membership,
-                                        caster_party_membership,
-                                        target_entity_val,
-                                        target_team,
-                                        target_clan_membership,
-                                        target_party_membership,
-                                        target_health_points.hp,
-                                        target_client_entity,
-                                        skill_data,
-                                    )
-                                }
-                                Err(_) => false
+                                )) => check_skill_target_filter(
+                                    caster_entity,
+                                    caster_team,
+                                    caster_clan_membership,
+                                    caster_party_membership,
+                                    target_entity_val,
+                                    target_team,
+                                    target_clan_membership,
+                                    target_party_membership,
+                                    target_health_points.hp,
+                                    target_client_entity,
+                                    skill_data,
+                                ),
+                                Err(_) => false,
                             }
                         }
                         Some(CommandCastSkillTarget::Position(_)) => {
@@ -713,6 +716,15 @@ pub fn command_system(
                                 );
                             }
                         }
+                    } else {
+                        // Send explicit rejection message for invalid target
+                        server_messages.send_entity_message(
+                            command_entity.client_entity,
+                            ServerMessage::CancelCastingSkill {
+                                entity_id: command_entity.client_entity.id,
+                                reason: crate::game::messages::server::CancelCastingSkillReason::InvalidTarget,
+                            },
+                        );
                     }
                 }
             }
@@ -985,18 +997,18 @@ pub fn command_system(
                     .position
                     .xy()
                     .distance(target.position.position.xy());
-                
+
                 log::info!(
                     "[COMBAT_DEBUG] Attack range check: attack_range={}, distance={}, in_range={}",
                     attack_range,
                     distance,
                     attack_range >= distance
                 );
-                
+
                 // Use 3x attack range to allow bot to start moving toward target earlier
                 // This prevents the bot from standing still when target is far away
                 let effective_attack_range = attack_range * 3.0;
-                
+
                 if effective_attack_range < distance {
                     // Not in range, set current command to move AND update next_command
                     // so the bot actually moves instead of re-processing Attack every frame
@@ -1010,7 +1022,7 @@ pub fn command_system(
                     command_entity.next_command.has_sent_server_message = false;
                     continue;
                 }
-                
+
                 if attack_range < distance {
                     // Close enough to start attack animation, but need to move closer
                     // The attack will execute and the bot will close distance naturally
@@ -1157,7 +1169,7 @@ pub fn command_system(
                     target.ability_values,
                     hit_count as i32,
                 );
-                
+
                 // DEBUG: Log damage event being sent
                 log::info!(
                     "[COMBAT_DEBUG] Sending DamageEvent: attacker={:?}, defender={:?}, damage={}, is_critical={}",
@@ -1263,22 +1275,20 @@ pub fn command_system(
                                 target_team,
                                 target_clan_membership,
                                 target_party_membership,
-                            )) => {
-                                check_skill_target_filter(
-                                    caster_entity,
-                                    caster_team,
-                                    caster_clan_membership,
-                                    caster_party_membership,
-                                    target_entity_val,
-                                    target_team,
-                                    target_clan_membership,
-                                    target_party_membership,
-                                    target_health_points.hp,
-                                    target_client_entity,
-                                    skill_data,
-                                )
-                            }
-                            Err(_) => false
+                            )) => check_skill_target_filter(
+                                caster_entity,
+                                caster_team,
+                                caster_clan_membership,
+                                caster_party_membership,
+                                target_entity_val,
+                                target_team,
+                                target_clan_membership,
+                                target_party_membership,
+                                target_health_points.hp,
+                                target_client_entity,
+                                skill_data,
+                            ),
+                            Err(_) => false,
                         }
                     }
                     Some(CommandCastSkillTarget::Position(_)) => {
