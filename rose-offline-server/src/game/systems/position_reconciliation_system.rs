@@ -53,13 +53,13 @@ pub fn position_reconciliation_system(
         &Position,
         &mut PositionSnapshotTimer,
     )>,
-    mut server_messages: ResMut<ServerMessages>,
+    _server_messages: ResMut<ServerMessages>,
     time: Res<Time>,
     config: Res<PositionReconciliationConfig>,
 ) {
     let delta_secs = time.delta_secs();
 
-    for (_entity, client_entity, position, mut snapshot_timer) in query.iter_mut() {
+    for (_entity, _client_entity, _position, mut snapshot_timer) in query.iter_mut() {
         // Update timer
         snapshot_timer.timer += delta_secs;
 
@@ -71,14 +71,12 @@ pub fn position_reconciliation_system(
         // Reset timer
         snapshot_timer.timer = 0.0;
 
-        // Send server-authoritative position to client as reconciliation correction
-        server_messages.send_entity_message(
-            client_entity,
-            crate::game::messages::server::ServerMessage::AdjustPosition {
-                entity_id: client_entity.id,
-                position: position.position,
-            },
-        );
+        // Intentionally do not emit periodic AdjustPosition packets here.
+        // Unconditional corrections were being interpreted as gameplay movement
+        // transitions on the client, causing visible stop/start movement jitter.
+        // Immediate reconciliation is still handled through explicit validation
+        // paths such as invalid MoveCollision reports.
+        let _ = config.max_divergence_cm;
     }
 }
 

@@ -1071,6 +1071,18 @@ pub fn game_server_main_system(
                     // Validate position is within reasonable bounds from current position
                     let current_pos = game_client.position.position;
                     let max_move_distance = 500.0; // Maximum allowed movement per tick (in cm)
+
+                    // If we are actively pursuing a combat/interaction target, do not rewrite
+                    // movement intent into a targetless Move command from client-side collision.
+                    // This avoids command oscillation and visible snaps near attack-range transitions.
+                    let preserve_targeted_pursuit = matches!(
+                        game_client.command.command,
+                        CommandData::Attack { .. }
+                            | CommandData::Move {
+                                target: Some(_),
+                                ..
+                            }
+                    );
                     
                     // Check if the position change is physically possible
                     let distance = position.xy().distance(current_pos.xy());
@@ -1089,34 +1101,36 @@ pub fn game_server_main_system(
                         server_messages.send_entity_message(
                             game_client.client_entity,
                             ServerMessage::AdjustPosition {
-                                entity_id: game_client.client_entity_id,
+                                entity_id: game_client.client_entity.id,
                                 position: current_pos,
                             },
                         );
                         log::warn!(
                             "[MOVE_VALIDATION] Entity {} rejected teleport attempt: distance={:.2}cm (max={:.2}cm)",
-                            game_client.client_entity_id,
+                            game_client.client_entity.id.0,
                             distance,
                             max_move_distance
                         );
                     } else if is_speed_hacking {
-                        // Allow the movement but log warning for monitoring
-                        // Server will be authoritative, so client will be corrected if actually invalid
+                        // Allow the movement but log warning for monitoring.
+                        // Update authoritative position only; avoid forcing a targetless Move command
+                        // while preserving attack/target pursuit state.
                         log::warn!(
                             "[MOVE_VALIDATION] Entity {} possible speed hack: distance={:.2}cm (allowed={:.2}cm)",
-                            game_client.client_entity_id,
+                            game_client.client_entity.id.0,
                             distance,
                             max_allowed_distance
                         );
-                        // Still accept the position but mark for reconciliation
-                        entity_commands
-                            .insert(NextCommand::with_move(position, None, None))
-                            .insert(Position::new(position, game_client.position.zone_id));
+                        entity_commands.insert(Position::new(position, game_client.position.zone_id));
+                        if !preserve_targeted_pursuit {
+                            entity_commands.insert(NextCommand::with_move(position, None, None));
+                        }
                     } else {
                         // Position is valid - accept it
-                        entity_commands
-                            .insert(NextCommand::with_move(position, None, None))
-                            .insert(Position::new(position, game_client.position.zone_id));
+                        entity_commands.insert(Position::new(position, game_client.position.zone_id));
+                        if !preserve_targeted_pursuit {
+                            entity_commands.insert(NextCommand::with_move(position, None, None));
+                        }
                     }
                 }
                 ClientMessage::CraftInsertGem {

@@ -1010,10 +1010,23 @@ pub fn command_system(
                 let effective_attack_range = attack_range * 3.0;
 
                 if effective_attack_range < distance {
+                    let direction_to_target =
+                        target.position.position.xy() - command_entity.position.position.xy();
+                    let move_destination = if direction_to_target.length_squared() > 0.0 {
+                        let offset = direction_to_target.normalize() * attack_range;
+                        Vec3::new(
+                            target.position.position.x - offset.x,
+                            target.position.position.y - offset.y,
+                            target.position.position.z,
+                        )
+                    } else {
+                        target.position.position
+                    };
+
                     // Not in range, set current command to move AND update next_command
                     // so the bot actually moves instead of re-processing Attack every frame
                     *command_entity.command = Command::with_move(
-                        target.position.position,
+                        move_destination,
                         Some(target_entity),
                         Some(MoveMode::Run),
                     );
@@ -1162,6 +1175,21 @@ pub fn command_system(
 
                 // In range, set current command to attack
                 *command_entity.command = Command::with_attack(target_entity, attack_duration);
+
+                // Broadcast each attack cycle start so clients restart attack animation
+                // for continuous server-authoritative combat instead of only on the
+                // first queued attack intent.
+                server_messages.send_entity_message(
+                    command_entity.client_entity,
+                    ServerMessage::AttackEntity {
+                        entity_id: command_entity.client_entity.id,
+                        target_entity_id: target.client_entity.id,
+                        distance: distance as u16,
+                        x: target.position.position.x,
+                        y: target.position.position.y,
+                        z: target.position.position.z as u16,
+                    },
+                );
 
                 // Calculate damage
                 let damage = game_data.ability_value_calculator.calculate_damage(
