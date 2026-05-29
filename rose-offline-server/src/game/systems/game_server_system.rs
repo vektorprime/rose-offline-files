@@ -1,10 +1,7 @@
 use bevy::{
-    prelude::{Commands, Entity, MessageWriter, Query, Res, ResMut, Without},
-    ecs::{
-        query::QueryData,
-        system::SystemParam,
-    },
+    ecs::{query::QueryData, system::SystemParam},
     math::{Vec3, Vec3Swizzles},
+    prelude::{Commands, Entity, MessageWriter, Query, Res, ResMut, Without},
     time::Time,
 };
 use log::warn;
@@ -385,12 +382,14 @@ pub fn game_server_join_system(
                                         {
                                             *party_member = PartyMember::Online(entity);
                                             party_membership = PartyMembership::new(party_entity);
-                                            party_member_events.write(PartyMemberEvent::Reconnect {
-                                                party_entity,
-                                                reconnect_entity: entity,
-                                                character_id: character_info.unique_id,
-                                                name: character_info.name.clone(),
-                                            });
+                                            party_member_events.write(
+                                                PartyMemberEvent::Reconnect {
+                                                    party_entity,
+                                                    reconnect_entity: entity,
+                                                    character_id: character_info.unique_id,
+                                                    name: character_info.name.clone(),
+                                                },
+                                            );
                                             break;
                                         }
                                     }
@@ -855,7 +854,7 @@ pub fn game_server_main_system(
                             *game_client.move_mode = MoveMode::Walk;
                             true
                         }
-                        MoveMode::Drive => false,
+                        MoveMode::Drive | MoveMode::Sail => false,
                     } {
                         server_messages.send_entity_message(
                             game_client.client_entity,
@@ -893,6 +892,7 @@ pub fn game_server_main_system(
                             commands.entity(game_client.entity).remove::<DrivingTime>();
                             true
                         }
+                        MoveMode::Sail => false,
                     } {
                         server_messages.send_entity_message(
                             game_client.client_entity,
@@ -1083,19 +1083,19 @@ pub fn game_server_main_system(
                                 ..
                             }
                     );
-                    
+
                     // Check if the position change is physically possible
                     let distance = position.xy().distance(current_pos.xy());
-                    
+
                     // Get the entity's move speed for validation
                     let max_speed = game_client.move_speed.speed;
                     let time_delta = 0.1; // Assume ~100ms tick rate
                     let max_allowed_distance = max_speed * time_delta * 1.5; // 50% tolerance for network lag
-                    
+
                     // Also check for teleportation (instant large distance changes)
                     let is_teleporting = distance > max_move_distance;
                     let is_speed_hacking = distance > max_allowed_distance;
-                    
+
                     if is_teleporting {
                         // Position is too far - reject and send adjustment
                         server_messages.send_entity_message(
@@ -1121,13 +1121,15 @@ pub fn game_server_main_system(
                             distance,
                             max_allowed_distance
                         );
-                        entity_commands.insert(Position::new(position, game_client.position.zone_id));
+                        entity_commands
+                            .insert(Position::new(position, game_client.position.zone_id));
                         if !preserve_targeted_pursuit {
                             entity_commands.insert(NextCommand::with_move(position, None, None));
                         }
                     } else {
                         // Position is valid - accept it
-                        entity_commands.insert(Position::new(position, game_client.position.zone_id));
+                        entity_commands
+                            .insert(Position::new(position, game_client.position.zone_id));
                         if !preserve_targeted_pursuit {
                             entity_commands.insert(NextCommand::with_move(position, None, None));
                         }

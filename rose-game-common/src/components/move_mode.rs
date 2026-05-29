@@ -6,4 +6,5 @@ pub enum MoveMode {
     Walk,
     Run,
     Drive,
+    Sail,
 }

@@ -3596,6 +3596,7 @@ pub enum PacketServerMoveToggleType {
     Walk,
     Run,
     Drive,
+    Sail,
     Sit,
 }
 
@@ -3620,6 +3621,7 @@ impl TryFrom<&Packet> for PacketServerMoveToggle {
             2 => PacketServerMoveToggleType::Walk,
             3 => PacketServerMoveToggleType::Run,
             4 => PacketServerMoveToggleType::Drive,
+            5 => PacketServerMoveToggleType::Sail,
             _ => return Err(PacketError::InvalidPacket),
         };
         let run_speed = reader.read_u16().ok().map(|x| x as i32);
@@ -3641,6 +3643,7 @@ impl From<&PacketServerMoveToggle> for Packet {
             PacketServerMoveToggleType::Walk => 2,
             PacketServerMoveToggleType::Run => 3,
             PacketServerMoveToggleType::Drive => 4,
+            PacketServerMoveToggleType::Sail => 5,
         });
         if let Some(run_speed) = packet.run_speed {
             writer.write_u16(run_speed as u16);

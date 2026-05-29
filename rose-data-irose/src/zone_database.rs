@@ -14,6 +14,17 @@ use rose_file_readers::{
 
 const MIN_SECTOR_SIZE: u32 = 5000;
 const MAX_SECTOR_SIZE: u32 = 12000;
+const OCEAN_ZONE_ID: usize = 200;
+const OCEAN_ZONE_ID_U16: u16 = 200;
+const OCEAN_ZONE_FILE: &str = "3DDATA/MAPS/OCEAN/OCEAN.ZON";
+const OCEAN_CNST_TABLE: &str = "3DDATA/MAPS/OCEAN/OCEAN_CNST.ZSC";
+const OCEAN_DECO_TABLE: &str = "3DDATA/MAPS/OCEAN/OCEAN_DECO.ZSC";
+const OCEAN_START_EVENT: &str = "start";
+const OCEAN_REVIVE_EVENT: &str = "revive";
+const OCEAN_SECTOR_SIZE: u32 = 5000;
+const OCEAN_ZONE_NAME: &str = "Ocean";
+const OCEAN_ZONE_DESCRIPTION: &str = "Open sailing waters.";
+const OCEAN_PLANET: usize = 1;
 
 pub struct StbZone(pub StbFile);
 
@@ -325,6 +336,182 @@ fn load_zone(
     })
 }
 
+fn ensure_zone_slot<T>(zones: &mut Vec<Option<T>>, id: usize) {
+    if zones.len() <= id {
+        zones.resize_with(id + 1, || None);
+    }
+}
+
+fn load_synthetic_ocean_zone(vfs: &VirtualFilesystem) -> Result<ZoneData, LoadZoneError> {
+    let zone_file = VfsPath::from(OCEAN_ZONE_FILE);
+    let zone_base_directory = zone_file
+        .path()
+        .parent()
+        .ok_or(LoadZoneError::ZonFileInvalidPath)?;
+
+    let zon_file: ZonFile = vfs
+        .read_file_with(
+            &zone_file,
+            &ZonReadOptions {
+                skip_zone_info: false,
+                skip_event_positions: false,
+                skip_textures: true,
+                skip_tiles: true,
+            },
+        )
+        .map_err(|_| LoadZoneError::ZonFileNotFound)?;
+
+    let mut monster_spawns = Vec::new();
+    let mut npcs = Vec::new();
+    let mut event_objects = Vec::new();
+
+    let mut num_blocks = 0;
+    let mut min_block_x = None;
+    let mut min_block_y = None;
+    let mut max_block_x = None;
+    let mut max_block_y = None;
+
+    let objects_offset = Vec3::new(
+        (64.0 / 2.0) * (zon_file.grid_size * zon_file.grid_per_patch * 16.0)
+            + (zon_file.grid_size * zon_file.grid_per_patch * 16.0) / 2.0,
+        (64.0 / 2.0) * (zon_file.grid_size * zon_file.grid_per_patch * 16.0)
+            + (zon_file.grid_size * zon_file.grid_per_patch * 16.0) / 2.0,
+        0.0,
+    );
+
+    let ifo_read_options = IfoReadOptions {
+        skip_event_objects: false,
+        skip_monster_spawns: false,
+        skip_npcs: false,
+        skip_animated_objects: true,
+        skip_collision_objects: true,
+        skip_cnst_objects: true,
+        skip_deco_objects: true,
+        skip_effect_objects: true,
+        skip_sound_objects: true,
+        skip_water_planes: true,
+        skip_warp_objects: true,
+    };
+
+    for block_y in 0..64u32 {
+        for block_x in 0..64u32 {
+            if let Ok(ifo_file) = vfs.read_file_with::<IfoFile, _>(
+                zone_base_directory.join(format!("{}_{}.IFO", block_x, block_y)),
+                &ifo_read_options,
+            ) {
+                monster_spawns.extend(
+                    ifo_file
+                        .monster_spawns
+                        .iter()
+                        .map(|x| create_monster_spawn(x, objects_offset)),
+                );
+                npcs.extend(
+                    ifo_file
+                        .npcs
+                        .iter()
+                        .filter_map(|x| create_npc_spawn(x, objects_offset)),
+                );
+                event_objects.extend(ifo_file.event_objects.iter().map(|event_object| {
+                    create_event_object(
+                        event_object,
+                        objects_offset,
+                        block_x as i32,
+                        block_y as i32,
+                    )
+                }));
+                num_blocks += 1;
+
+                min_block_x = Some(min_block_x.map_or(block_x, |value| u32::min(value, block_x)));
+                min_block_y = Some(min_block_y.map_or(block_y, |value| u32::min(value, block_y)));
+                max_block_x = Some(max_block_x.map_or(block_x, |value| u32::max(value, block_x)));
+                max_block_y = Some(max_block_y.map_or(block_y, |value| u32::max(value, block_y)));
+            }
+        }
+    }
+
+    if min_block_x.is_none()
+        || min_block_y.is_none()
+        || max_block_x.is_none()
+        || max_block_y.is_none()
+    {
+        return Err(LoadZoneError::NotExists);
+    }
+
+    let min_x = min_block_x.unwrap();
+    let min_y = min_block_y.unwrap() + 1;
+    let max_x = max_block_x.unwrap() + 1;
+    let max_y = max_block_y.unwrap() + 2;
+
+    let sector_size = OCEAN_SECTOR_SIZE.clamp(MIN_SECTOR_SIZE, MAX_SECTOR_SIZE);
+    let block_size = 16.0 * zon_file.grid_per_patch * zon_file.grid_size;
+    let num_blocks_x = max_x - min_x;
+    let num_blocks_y = max_y - min_y;
+    let num_sectors_x = ((num_blocks_x as f32 * block_size) / sector_size as f32) as u32;
+    let num_sectors_y = ((num_blocks_y as f32 * block_size) / sector_size as f32) as u32;
+
+    let default_position = Vec3::new(objects_offset.x, objects_offset.y, 180.0);
+    let mut start_position = default_position;
+    let mut revive_positions = Vec::new();
+    for (name, position) in zon_file.event_positions.iter() {
+        let position = Vec3::new(position.x, position.y, position.z).xzy() + objects_offset;
+
+        if name == OCEAN_START_EVENT {
+            start_position = position;
+        }
+
+        if name == OCEAN_REVIVE_EVENT {
+            revive_positions.push(position);
+        }
+    }
+
+    if revive_positions.is_empty() {
+        revive_positions.push(start_position);
+    }
+
+    debug!(
+        "Loaded synthetic ocean zone {} blocks: {}, sectors ({}, {}), start: {}",
+        OCEAN_ZONE_ID,
+        num_blocks,
+        num_sectors_x,
+        num_sectors_y,
+        start_position.xy(),
+    );
+
+    Ok(ZoneData {
+        id: ZoneId::new(OCEAN_ZONE_ID_U16).ok_or(LoadZoneError::NotExists)?,
+        name: OCEAN_ZONE_NAME.to_string(),
+        description: OCEAN_ZONE_DESCRIPTION.to_string(),
+        sector_size,
+        grid_per_patch: zon_file.grid_per_patch,
+        grid_size: zon_file.grid_size,
+        event_objects,
+        monster_spawns,
+        npcs,
+        sectors_base_position: Vec2::new((min_x as f32) * block_size, (min_y as f32) * block_size),
+        num_sectors_x,
+        num_sectors_y,
+        start_position,
+        revive_positions,
+        event_positions: zon_file
+            .event_positions
+            .into_iter()
+            .map(|(name, position)| {
+                (
+                    name,
+                    Vec3::new(position.x, position.y, position.z).xzy() + objects_offset,
+                )
+            })
+            .collect(),
+        day_cycle: WORLD_TICKS_PER_DAY as u32,
+        morning_time: (WORLD_TICKS_PER_DAY / 6) as u32,
+        day_time: (2 * WORLD_TICKS_PER_DAY / 6) as u32,
+        evening_time: (4 * WORLD_TICKS_PER_DAY / 6) as u32,
+        night_time: (5 * WORLD_TICKS_PER_DAY / 6) as u32,
+        skybox_id: None,
+        planet: OCEAN_PLANET,
+    })
+}
+
 pub fn get_zone_database(
     vfs: &VirtualFilesystem,
     string_database: Arc<StringDatabase>,
@@ -334,6 +521,12 @@ pub fn get_zone_database(
     zones.push(None); // Zone ID 0
     for id in 1..data.rows() {
         zones.push(load_zone(vfs, &data, &string_database, id).ok());
+    }
+
+    let needs_ocean_zone = zones.get(OCEAN_ZONE_ID).map_or(true, Option::is_none);
+    if needs_ocean_zone && vfs.exists(OCEAN_ZONE_FILE) {
+        ensure_zone_slot(&mut zones, OCEAN_ZONE_ID);
+        zones[OCEAN_ZONE_ID] = load_synthetic_ocean_zone(vfs).ok();
     }
 
     Ok(ZoneDatabase::new(string_database, zones))
@@ -384,6 +577,29 @@ fn load_zone_list_entry(
     })
 }
 
+fn load_synthetic_ocean_zone_list_entry() -> Result<ZoneListEntry, LoadZoneError> {
+    Ok(ZoneListEntry {
+        id: ZoneId::new(OCEAN_ZONE_ID_U16).ok_or(LoadZoneError::NotExists)?,
+        name: OCEAN_ZONE_NAME.to_string(),
+        description: OCEAN_ZONE_DESCRIPTION.to_string(),
+        minimap_path: None,
+        minimap_start_x: 0,
+        minimap_start_y: 0,
+        zon_file_path: VfsPathBuf::new(OCEAN_ZONE_FILE),
+        zsc_cnst_path: VfsPathBuf::new(OCEAN_CNST_TABLE),
+        zsc_deco_path: VfsPathBuf::new(OCEAN_DECO_TABLE),
+        day_cycle: WORLD_TICKS_PER_DAY as u32,
+        morning_time: (WORLD_TICKS_PER_DAY / 6) as u32,
+        day_time: (2 * WORLD_TICKS_PER_DAY / 6) as u32,
+        evening_time: (4 * WORLD_TICKS_PER_DAY / 6) as u32,
+        night_time: (5 * WORLD_TICKS_PER_DAY / 6) as u32,
+        skybox_id: None,
+        background_music_day: None,
+        background_music_night: None,
+        footstep_type: Some(0),
+    })
+}
+
 pub fn get_zone_list(
     vfs: &VirtualFilesystem,
     string_database: Arc<StringDatabase>,
@@ -393,6 +609,12 @@ pub fn get_zone_list(
     zones.push(None); // Zone ID 0
     for id in 1..data.rows() {
         zones.push(load_zone_list_entry(&data, &string_database, id).ok());
+    }
+
+    let needs_ocean_zone = zones.get(OCEAN_ZONE_ID).map_or(true, Option::is_none);
+    if needs_ocean_zone && vfs.exists(OCEAN_ZONE_FILE) {
+        ensure_zone_slot(&mut zones, OCEAN_ZONE_ID);
+        zones[OCEAN_ZONE_ID] = load_synthetic_ocean_zone_list_entry().ok();
     }
 
     Ok(ZoneList::new(string_database, zones))

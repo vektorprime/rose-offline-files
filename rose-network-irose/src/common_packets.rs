@@ -637,6 +637,7 @@ impl<'a> PacketReadMoveMode for PacketReader<'a> {
             0 => Ok(MoveMode::Walk),
             1 => Ok(MoveMode::Run),
             2 => Ok(MoveMode::Drive),
+            3 => Ok(MoveMode::Sail),
             _ => Err(PacketError::InvalidPacket),
         }
     }
@@ -652,6 +653,7 @@ impl PacketWriteMoveMode for PacketWriter {
             MoveMode::Walk => 0,
             MoveMode::Run => 1,
             MoveMode::Drive => 2,
+            MoveMode::Sail => 3,
         })
     }
 }

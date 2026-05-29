@@ -1333,6 +1333,7 @@ impl GameServer {
                             MoveMode::Walk => PacketServerMoveToggleType::Walk,
                             MoveMode::Run => PacketServerMoveToggleType::Run,
                             MoveMode::Drive => PacketServerMoveToggleType::Drive,
+                            MoveMode::Sail => PacketServerMoveToggleType::Sail,
                         },
                         run_speed,
                     }))

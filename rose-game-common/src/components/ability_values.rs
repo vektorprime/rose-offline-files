@@ -305,6 +305,7 @@ impl AbilityValues {
             MoveMode::Walk => self.get_walk_speed(),
             MoveMode::Run => self.get_run_speed(),
             MoveMode::Drive => self.get_vehicle_move_speed(),
+            MoveMode::Sail => self.get_vehicle_move_speed(),
         }
     }
 }
