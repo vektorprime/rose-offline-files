@@ -34,6 +34,17 @@ const CHARACTER_MOVE_TO_DISTANCE: f32 = 1000.0;
 const DROPPED_ITEM_MOVE_TO_DISTANCE: f32 = 150.0;
 const DROPPED_ITEM_PICKUP_DISTANCE: f32 = 200.0;
 
+/// Stop this far inside the attack-range boundary when chasing an attack target,
+/// mirroring the client's CHASE_MARGIN_CM. Parking exactly ON the boundary is a
+/// floating-point fixed point: `target.position - normalized_direction *
+/// attack_range` rounds to the f32 grid at large world coordinates (ulp of
+/// ~0.03cm at 500000cm), so the stop point can land a few hundredths of a cm
+/// outside the range circle. The strict `attack_range < distance` check then
+/// re-derives the identical destination every frame, the copy never moves, and
+/// combat cannot start until the target itself moves. A margin dwarfs the
+/// rounding and makes the equilibrium stable on the "in range" side.
+const ATTACK_APPROACH_MARGIN_CM: f32 = 100.0;
+
 #[derive(QueryData)]
 #[query_data(mutable)]
 pub struct QueryCommandEntity<'w> {
@@ -1005,15 +1016,20 @@ pub fn command_system(
                     attack_range >= distance
                 );
 
-                // Use 3x attack range to allow bot to start moving toward target earlier
-                // This prevents the bot from standing still when target is far away
-                let effective_attack_range = attack_range * 3.0;
-
-                if effective_attack_range < distance {
+                // Attack only when actually within attack range. The client plays the
+                // attack animation only when within the same range, so attacking from
+                // further away desyncs the client (it never fires a hit frame, and the
+                // kill is delayed until the client's pending damage ages out).
+                if attack_range < distance {
                     let direction_to_target =
                         target.position.position.xy() - command_entity.position.position.xy();
                     let move_destination = if direction_to_target.length_squared() > 0.0 {
-                        let offset = direction_to_target.normalize() * attack_range;
+                        // Park inside the range boundary (see ATTACK_APPROACH_MARGIN_CM) so the
+                        // stop point is a stable in-range position instead of a rounded point on
+                        // the circle that re-derives itself forever.
+                        let approach_range =
+                            (attack_range - ATTACK_APPROACH_MARGIN_CM).max(0.0);
+                        let offset = direction_to_target.normalize() * approach_range;
                         Vec3::new(
                             target.position.position.x - offset.x,
                             target.position.position.y - offset.y,
@@ -1034,16 +1050,6 @@ pub fn command_system(
                     // but mark it as needing to send server message so Move is broadcast
                     command_entity.next_command.has_sent_server_message = false;
                     continue;
-                }
-
-                if attack_range < distance {
-                    // Close enough to start attack animation, but need to move closer
-                    // The attack will execute and the bot will close distance naturally
-                    log::info!(
-                        "[COMBAT_DEBUG] Within effective range ({}), starting attack (actual range={})",
-                        effective_attack_range,
-                        attack_range
-                    );
                 }
 
                 let mut cancel_attack = false;
@@ -1488,6 +1494,25 @@ pub fn command_system(
                     casting_duration,
                     action_duration,
                 );
+            }
+            CommandData::Emote {
+                motion_id,
+                is_stop,
+            } => {
+                // Apply the emote as the current command so remote clients see it.
+                let motion_duration = game_data
+                    .motions
+                    .find_first_character_motion(
+                        *motion_id,
+                        weapon_motion_type,
+                        weapon_motion_gender,
+                    )
+                    .map(|motion_data| motion_data.duration)
+                    .unwrap_or_else(|| Duration::from_secs(2));
+
+                *command_entity.command =
+                    Command::with_emote(*motion_id, *is_stop, motion_duration);
+                *command_entity.next_command = NextCommand::default();
             }
             CommandData::Sit | CommandData::Sitting => {
                 // Set current command to sitting transition
