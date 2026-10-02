@@ -18,6 +18,9 @@ pub struct GameConfig {
     /// Route long bot/monster travel orders around baked zone blockers
     /// (IFO walls + cnst/deco props). Disable to restore direct walking.
     pub enable_bot_navigation: bool,
+    /// Hunting bots now and then invite nearby real players of a similar
+    /// level to their party (and offer one when a player asks for a party).
+    pub bot_invite_players: bool,
 }
 
 impl GameConfig {
@@ -34,6 +37,7 @@ impl GameConfig {
             bot_spawn_all_zones: true,
             bot_total_cap: 700,
             enable_bot_navigation: true,
+            bot_invite_players: true,
         }
     }
 }

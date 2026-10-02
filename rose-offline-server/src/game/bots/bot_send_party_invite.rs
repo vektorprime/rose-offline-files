@@ -1,8 +1,11 @@
+use std::time::{Duration, Instant};
+
 use bevy::{
     ecs::query::QueryData,
     math::Vec3Swizzles,
     prelude::{Component, Entity, MessageWriter, Query, Res, With},
 };
+use rand::Rng;
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
 use rose_game_common::components::Level;
 
@@ -12,11 +15,13 @@ use crate::game::{
     resources::ClientEntityList,
 };
 
-use super::{create_bot::BotBuild, BotQueryFilterAlive};
+use super::{bot_personality::BotScanCache, create_bot::BotBuild, BotQueryFilterAlive};
 
 const PARTY_SEARCH_DISTANCE: f32 = 2000.0f32;
 const PARTY_LEVEL_DIFFERENCE: i32 = 10;
 const PARTY_DESIRED_SIZE: usize = 4;
+/// How often a bot looks for party members (randomised per scan).
+const PARTY_SCAN_INTERVAL_MS: std::ops::Range<u64> = 2000..5000;
 
 #[derive(Clone, Component, Debug, ScorerBuilder)]
 pub struct CanPartyInviteNearbyBot {
@@ -44,6 +49,15 @@ fn can_invite(
         return false;
     }
 
+    // Already asked, waiting for an answer.
+    if nearby_bot
+        .party_membership
+        .pending_invites
+        .contains(&bot.entity)
+    {
+        return false;
+    }
+
     if nearby_bot.bot_build.job_id == bot.bot_build.job_id {
         return false;
     }
@@ -63,12 +77,41 @@ fn can_invite(
     true
 }
 
+fn has_party_candidate_nearby(
+    bot: &BotQueryItem,
+    query_bot: &Query<BotQuery, BotQueryFilterAlive>,
+    query_party: &Query<&Party>,
+    client_entity_list: &ClientEntityList,
+) -> bool {
+    let Some(zone_entities) = client_entity_list.get_zone(bot.position.zone_id) else {
+        return false;
+    };
+
+    // Are there any nearby bots which would make a good party member
+    zone_entities
+        .iter_entity_type_within_distance(
+            bot.position.position.xy(),
+            PARTY_SEARCH_DISTANCE,
+            &[ClientEntityType::Character],
+        )
+        .any(|(nearby_entity, _)| {
+            query_bot
+                .get(nearby_entity)
+                .ok()
+                .map_or(false, |nearby_bot| can_invite(bot, &nearby_bot, query_party))
+        })
+}
+
 pub fn score_can_party_invite_nearby_bot(
     mut query: Query<(&CanPartyInviteNearbyBot, &Actor, &mut Score)>,
     query_bot: Query<BotQuery, BotQueryFilterAlive>,
     query_party: Query<&Party>,
+    mut query_scan: Query<&mut BotScanCache>,
     client_entity_list: Res<ClientEntityList>,
 ) {
+    let now = Instant::now();
+    let mut rng = rand::thread_rng();
+
     for (scorer, &Actor(bot_entity), mut score) in query.iter_mut() {
         score.set(0.0);
 
@@ -87,24 +130,22 @@ pub fn score_can_party_invite_nearby_bot(
             }
         }
 
-        let Some(zone_entities) = client_entity_list.get_zone(bot.position.zone_id) else {
-            continue;
+        // Looking around for party members every few seconds is plenty (and
+        // gives a natural pause before bots that meet group up).
+        let found = match query_scan.get_mut(bot_entity) {
+            Ok(mut cache) => {
+                if cache.next_party_scan.map_or(true, |next| now >= next) {
+                    cache.party_candidate =
+                        has_party_candidate_nearby(&bot, &query_bot, &query_party, &client_entity_list);
+                    cache.next_party_scan =
+                        Some(now + Duration::from_millis(rng.gen_range(PARTY_SCAN_INTERVAL_MS)));
+                }
+                cache.party_candidate
+            }
+            Err(_) => has_party_candidate_nearby(&bot, &query_bot, &query_party, &client_entity_list),
         };
 
-        // Are there any nearby bots which would make a good party member
-        if zone_entities
-            .iter_entity_type_within_distance(
-                bot.position.position.xy(),
-                PARTY_SEARCH_DISTANCE,
-                &[ClientEntityType::Character],
-            )
-            .any(|(nearby_entity, _)| {
-                query_bot
-                    .get(nearby_entity)
-                    .ok()
-                    .map_or(false, |nearby_bot| can_invite(&bot, &nearby_bot, &query_party))
-            })
-        {
+        if found {
             score.set(scorer.score);
         }
     }
@@ -114,9 +155,13 @@ pub fn action_party_invite_nearby_bot(
     mut query: Query<(&Actor, &mut ActionState), With<PartyInviteNearbyBot>>,
     query_bot: Query<BotQuery, BotQueryFilterAlive>,
     query_party: Query<&Party>,
+    mut query_scan: Query<&mut BotScanCache>,
     client_entity_list: Res<ClientEntityList>,
     mut party_events: MessageWriter<PartyEvent>,
 ) {
+    let now = Instant::now();
+    let mut rng = rand::thread_rng();
+
     for (&Actor(bot_entity), mut state) in query.iter_mut() {
         let Ok(bot) = query_bot.get(bot_entity) else {
             continue;
@@ -150,6 +195,14 @@ pub fn action_party_invite_nearby_bot(
                         *state = ActionState::Success;
                         break;
                     }
+                }
+
+                // One invite per look around: the cached "candidate nearby"
+                // would otherwise keep the thinker on this choice.
+                if let Ok(mut cache) = query_scan.get_mut(bot_entity) {
+                    cache.party_candidate = false;
+                    cache.next_party_scan =
+                        Some(now + Duration::from_millis(rng.gen_range(PARTY_SCAN_INTERVAL_MS)));
                 }
             }
             ActionState::Cancelled => {

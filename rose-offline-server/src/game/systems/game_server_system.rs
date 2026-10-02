@@ -403,6 +403,14 @@ pub fn game_server_join_system(
                             let mut party_membership = PartyMembership::default();
                             for (party_entity, mut party) in party_query.iter_mut() {
                                 for party_member in party.members.iter_mut() {
+                                    // Still an online member (warp / zone change): keep the
+                                    // membership instead of resetting it to "no party".
+                                    if matches!(*party_member, PartyMember::Online(member_entity) if member_entity == entity)
+                                    {
+                                        party_membership = PartyMembership::new(party_entity);
+                                        break;
+                                    }
+
                                     if let PartyMember::Offline(
                                         party_member_character_id,
                                         party_member_name,

@@ -223,7 +223,18 @@ pub fn command_system(
                 CommandData::Stop { .. } => {}
                 CommandData::PersonalStore => {}
                 CommandData::PickupItemDrop { .. } => {}
-                CommandData::Emote { .. } => {}
+                // Clients (including the emoting player's own) only play an emote when the
+                // server announces it.
+                &mut CommandData::Emote { motion_id, is_stop } => {
+                    server_messages.send_entity_message(
+                        command_entity.client_entity,
+                        ServerMessage::UseEmote {
+                            entity_id: command_entity.client_entity.id,
+                            motion_id,
+                            is_stop,
+                        },
+                    );
+                }
                 CommandData::Move {
                     destination,
                     target,

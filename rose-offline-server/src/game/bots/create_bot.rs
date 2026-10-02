@@ -2,11 +2,12 @@ use bevy::prelude::Component;
 use rand::seq::SliceRandom;
 
 use rose_data::{
-    AbilityType, AmmoIndex, EquipmentIndex, EquipmentItem, ItemClass, ItemReference, ItemType,
-    JobId, SkillId, StackableItem,
+    AbilityType, AmmoIndex, BaseItemData, EquipmentIndex, EquipmentItem, ItemClass, ItemReference,
+    ItemType, JobClassId, JobId, SkillId, StackableItem,
 };
 use rose_game_common::components::{
-    AbilityValues, BasicStatType, BasicStats, CharacterGender, StatPoints, StatusEffects,
+    AbilityValues, BasicStatType, BasicStats, CharacterGender, Equipment, StatPoints,
+    StatusEffects,
 };
 
 use crate::game::{
@@ -401,6 +402,14 @@ fn level_up_bot(game_data: &GameData, level: u32, bot_data: &mut CharacterStorag
     }
 }
 
+/// The item's level requirement, if it has one.
+fn item_level_requirement(item: &BaseItemData) -> Option<u32> {
+    item.equip_ability_requirement
+        .iter()
+        .find(|(ability_type, _)| *ability_type == AbilityType::Level)
+        .map(|(_, level)| *level)
+}
+
 fn choose_highest_level_item_by_class(
     game_data: &GameData,
     item_type: ItemType,
@@ -419,14 +428,10 @@ fn choose_highest_level_item_by_class(
             continue;
         }
 
-        if let Some((_, item_level)) = item
-            .equip_ability_requirement
-            .iter()
-            .find(|(ability_type, _)| *ability_type == AbilityType::Level)
-        {
-            if best_item_level < *item_level && *item_level < level {
+        if let Some(item_level) = item_level_requirement(item) {
+            if best_item_level < item_level && item_level < level {
                 best_item = Some(item);
-                best_item_level = *item_level;
+                best_item_level = item_level;
             }
         }
     }
@@ -434,60 +439,129 @@ fn choose_highest_level_item_by_class(
     best_item.and_then(|item_data| EquipmentItem::new(item_data.id, item_data.durability))
 }
 
+/// Job classes which include the build's job.
+fn bot_job_classes(game_data: &GameData, bot_build: &BotBuild) -> Vec<JobClassId> {
+    game_data
+        .job_class
+        .iter()
+        .filter(|job_class| job_class.jobs.contains(&bot_build.job_id))
+        .map(|job_class| job_class.id)
+        .collect()
+}
+
+/// Highest level armour for `equipment_index` that the job may wear and
+/// that is below `level`.
+fn choose_highest_level_armour(
+    game_data: &GameData,
+    job_classes: &[JobClassId],
+    equipment_index: EquipmentIndex,
+    level: u32,
+) -> Option<EquipmentItem> {
+    let mut best_item = None;
+    let mut best_item_level = 0;
+
+    for item_reference in game_data.items.iter_items(equipment_index.into()) {
+        let Some(item) = game_data.items.get_base_item(item_reference) else {
+            continue;
+        };
+
+        // Find item which requires our job
+        if !item
+            .equip_job_class_requirement
+            .map_or(false, |job_class| job_classes.contains(&job_class))
+        {
+            continue;
+        }
+
+        // Choose item with highest level which we can equip
+        if let Some(item_level) = item_level_requirement(item) {
+            if best_item_level < item_level && item_level < level {
+                best_item = Some(item);
+                best_item_level = item_level;
+            }
+        }
+    }
+
+    best_item.and_then(|item_data| EquipmentItem::new(item_data.id, item_data.durability))
+}
+
+const BOT_ARMOUR_SLOTS: [EquipmentIndex; 4] = [
+    EquipmentIndex::Head,
+    EquipmentIndex::Body,
+    EquipmentIndex::Hands,
+    EquipmentIndex::Feet,
+];
+
+/// Gear a bot of `level` would wear now that is better (higher level
+/// requirement) than what it has on, for upgrading after a level up.
+pub fn bot_equipment_upgrades(
+    game_data: &GameData,
+    bot_build: &BotBuild,
+    equipment: &Equipment,
+    level: u32,
+) -> Vec<(EquipmentIndex, EquipmentItem)> {
+    let job_classes = bot_job_classes(game_data, bot_build);
+
+    let mut best: Vec<(EquipmentIndex, Option<EquipmentItem>)> = BOT_ARMOUR_SLOTS
+        .iter()
+        .map(|&index| {
+            (
+                index,
+                choose_highest_level_armour(game_data, &job_classes, index, level),
+            )
+        })
+        .collect();
+    best.push((
+        EquipmentIndex::Weapon,
+        choose_highest_level_item_by_class(game_data, ItemType::Weapon, bot_build.weapon_type, level),
+    ));
+    if let Some(subweapon_type) = bot_build.subweapon_type {
+        best.push((
+            EquipmentIndex::SubWeapon,
+            choose_highest_level_item_by_class(game_data, ItemType::SubWeapon, subweapon_type, level),
+        ));
+    }
+
+    best.into_iter()
+        .filter_map(|(index, best_item)| {
+            let best_item = best_item?;
+            let current = equipment.equipped_items[index].as_ref();
+            if current.is_some_and(|current| current.item == best_item.item) {
+                return None;
+            }
+
+            let best_level = game_data
+                .items
+                .get_base_item(best_item.item)
+                .and_then(item_level_requirement);
+            let current_level = current
+                .and_then(|current| game_data.items.get_base_item(current.item))
+                .and_then(item_level_requirement);
+            let better = match (current, current_level, best_level) {
+                (None, _, _) => true,
+                (Some(_), None, Some(_)) => true,
+                (Some(_), Some(current_level), Some(best_level)) => best_level > current_level,
+                _ => false,
+            };
+            better.then_some((index, best_item))
+        })
+        .collect()
+}
+
 fn choose_equipment_items(
     game_data: &GameData,
     bot_build: &BotBuild,
     bot_data: &mut CharacterStorage,
 ) {
+    let job_classes = bot_job_classes(game_data, bot_build);
     let equipment = &mut bot_data.equipment;
 
-    // Create a list of JobClassId which applies to selected job
-    let mut valid_job_classes = Vec::new();
-    for job_class in game_data.job_class.iter() {
-        if job_class.jobs.contains(&bot_build.job_id) {
-            valid_job_classes.push(job_class.id);
-        }
-    }
-
     // Choose armour items
-    for equipment_index in [
-        EquipmentIndex::Head,
-        EquipmentIndex::Body,
-        EquipmentIndex::Hands,
-        EquipmentIndex::Feet,
-    ] {
-        let mut best_item = None;
-        let mut best_item_level = 0;
-
-        for item_reference in game_data.items.iter_items(equipment_index.into()) {
-            let Some(item) = game_data.items.get_base_item(item_reference) else {
-                continue;
-            };
-
-            // Find item which requires our job
-            if !item
-                .equip_job_class_requirement
-                .map_or(false, |job_class| valid_job_classes.contains(&job_class))
-            {
-                continue;
-            }
-
-            // Choose item with highest level which we can equip
-            if let Some((_, level)) = item
-                .equip_ability_requirement
-                .iter()
-                .find(|(ability_type, _)| *ability_type == AbilityType::Level)
-            {
-                if best_item_level < *level && *level < bot_data.level.level {
-                    best_item = Some(item);
-                    best_item_level = *level;
-                }
-            }
-        }
-
-        if let Some(item_data) = best_item {
-            equipment.equipped_items[equipment_index] =
-                EquipmentItem::new(item_data.id, item_data.durability);
+    for equipment_index in BOT_ARMOUR_SLOTS {
+        if let Some(item) =
+            choose_highest_level_armour(game_data, &job_classes, equipment_index, bot_data.level.level)
+        {
+            equipment.equipped_items[equipment_index] = Some(item);
         }
     }
 

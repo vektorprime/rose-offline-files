@@ -6,27 +6,29 @@ mod bot_call_help;
 mod bot_chat;
 mod bot_chat_reply;
 mod bot_cheer_kill;
-mod bot_emote;
+mod bot_emotes;
+mod bot_field_life;
 mod bot_find_monster_spawn;
 mod bot_find_nearby_target;
 mod bot_follow_party_leader;
 mod bot_greet;
+mod bot_invite_player;
 mod bot_join_zone;
+mod bot_level_up;
 mod bot_navigation;
+mod bot_personality;
 mod bot_pickup_item;
 mod bot_react_emote;
 mod bot_revive;
 mod bot_send_party_invite;
-mod bot_sit_in_town;
 mod bot_sit_recover_hp;
 mod bot_snowball_fight;
+mod bot_town_life;
 mod bot_use_attack_skill;
 mod bot_use_buff_skill;
 mod bot_use_heal_skill;
 mod bot_vendor;
 mod bot_vendor_ad;
-mod bot_visit_npc;
-mod bot_wander_town;
 
 mod create_bot;
 mod create_llm_buddy_bot;
@@ -48,9 +50,21 @@ use bot_accept_party_invite::{
     action_accept_party_invite, score_has_party_invite, AcceptPartyInvite, HasPartyInvite,
 };
 use bot_call_help::{bot_call_for_help_system, BotAssistRequests};
+use bot_chat::{bot_chatter_system, bot_say, fill_template, first_name, BotChatZoneLimits};
+use bot_chat_reply::bot_chat_hear_system;
 use bot_cheer_kill::bot_cheer_kill_system;
-use bot_greet::bot_greet_system;
+use bot_emotes::{bot_emotes_init_system, BotEmotes};
+use bot_field_life::{
+    action_restock_trip, action_take_break, bot_potion_table_init_system, bot_upkeep_system,
+    score_needs_restock, score_should_take_break, BotPotionTable, NeedsRestock, RestockTrip,
+    ShouldTakeBreak, TakeBreak,
+};
+use bot_greet::{bot_greet_system, BotGreetLimiter};
+use bot_invite_player::{bot_invite_player_system, BotPlayerInvites};
+use bot_level_up::bot_level_up_system;
+use bot_personality::{bot_assign_personality_system, BotPersonality};
 use bot_react_emote::{bot_react_emote_system, player_emote_detect_system, LastEmoteState};
+use bot_town_life::{action_town_life, score_in_town_zone, InTownZone, TownLife};
 use bot_vendor_ad::bot_vendor_ad_system;
 use bot_attack_party_target::{
     action_attack_party_target, score_should_attack_party_target, AttackPartyTarget,
@@ -62,14 +76,6 @@ use bot_attack_target::{
 use bot_attack_threat::{
     action_attack_threat, score_threat_is_not_target, AttackThreat, ThreatIsNotTarget,
 };
-use bot_chat::{
-    action_bot_chat_local, classify_chat_topic, random_chat_line, score_should_bot_chat,
-    BotChatLocal, ShouldBotChat,
-};
-use bot_chat_reply::{
-    action_bot_chat_reply, score_should_reply_to_chat, BotChatReply, ShouldReplyToChat,
-};
-use bot_emote::{action_bot_emote, score_should_emote, BotEmote, ShouldEmote};
 use bot_find_monster_spawn::{action_find_monster_spawn, FindMonsterSpawns};
 use bot_find_nearby_target::{
     action_attack_random_nearby_target, score_find_nearby_target, AttackRandomNearbyTarget,
@@ -90,7 +96,6 @@ use bot_send_party_invite::{
     action_party_invite_nearby_bot, score_can_party_invite_nearby_bot, CanPartyInviteNearbyBot,
     PartyInviteNearbyBot,
 };
-use bot_sit_in_town::{action_sit_in_town, score_should_sit_in_town, ShouldSitInTown, SitInTown};
 use bot_sit_recover_hp::{
     action_sit_recover_hp, score_should_sit_recover_hp, ShouldSitRecoverHp, SitRecoverHp,
 };
@@ -104,18 +109,16 @@ use bot_use_buff_skill::{
 use bot_use_heal_skill::{
     action_use_heal_skill, score_should_use_heal_skill, ShouldUseHealSkill, UseHealSkill,
 };
-use bot_visit_npc::{action_visit_npc, score_should_visit_npc, ShouldVisitNpc, VisitNpc};
 pub use bot_vendor::{
     action_vendor_idle, bot_vendor_thinker, spawn_vendor_bot, VendorBot, VendorIdle,
     VENDOR_BOTS_PER_TOWN,
 };
-use bot_wander_town::{action_wander_town, score_should_wander_town, ShouldWanderTown, WanderTown};
 
 use bevy::{
     ecs::{change_detection::DetectChangesMut, entity::EntityHashSet, schedule::IntoScheduleConfigs},
     prelude::{
-        Commands, Component, Entity, MessageReader, MessageWriter, Plugin, Query, Res, ResMut,
-        Update, With, Without,
+        Commands, Component, Entity, MessageWriter, Plugin, Query, Res, ResMut, Startup, Update,
+        With, Without,
     },
 };
 use big_brain::{
@@ -123,19 +126,17 @@ use big_brain::{
     thinker::{Thinker, ThinkerBuilder},
     BigBrainPlugin, BigBrainSet,
 };
-use rand::Rng;
+use rand::{seq::SliceRandom, Rng};
 use std::time::{Duration, Instant};
 
 use crate::game::{
     bundles::SkillListBundle,
     components::{
-        AbilityValues, CharacterInfo, ChatType, ClientEntity, ClientEntityType, Command,
-        CommandData, Dead, ExperiencePoints, HealthPoints, Inventory, Level, LlmBuddyBot,
-        ManaPoints, NextCommand, PartyMembership, Position, SkillList, SkillPoints, Stamina,
-        StatPoints, UnionMembership,
+        AbilityValues, CharacterInfo, ClientEntity, Command, CommandData, Dead, ExperiencePoints,
+        HealthPoints, Inventory, Level, LlmBuddyBot, ManaPoints, NextCommand, PartyMembership,
+        Position, SkillList, SkillPoints, Stamina, StatPoints, UnionMembership,
     },
     events::{ChatMessageEvent, PartyEvent, PlayerEmoteEvent},
-    messages::server::ServerMessage,
     resources::{GameData, ServerMessages},
 };
 
@@ -144,14 +145,12 @@ const IDLE_DURATION: Duration = Duration::from_millis(250);
 /// Number of NPC spawns a zone needs to be considered a town.
 pub const TOWN_NPC_THRESHOLD: usize = 12;
 
-/// How long a bot must wait between chat replies.
+/// How long a bot must wait between chat replies (players talking to the
+/// bot by name are always answered).
 pub const BOT_CHAT_REPLY_COOLDOWN: Duration = Duration::from_secs(12);
 
-/// Maximum number of chat messages a bot remembers.
+/// Maximum number of recent replies a bot remembers.
 pub const BOT_CHAT_MEMORY_SIZE: usize = 8;
-
-/// How long a captured chat message remains replyable.
-pub const BOT_CHAT_MEMORY_AGE: Duration = Duration::from_secs(10);
 
 type BotQueryFilterAlive = (With<ClientEntity>, Without<Dead>);
 type BotQueryFilterAliveNoTarget = (With<ClientEntity>, Without<Dead>, Without<BotCombatTarget>);
@@ -159,7 +158,7 @@ type BotQueryFilterAliveNoTarget = (With<ClientEntity>, Without<Dead>, Without<B
 /// The social role a bot plays in the world. Determines which thinker is used.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BotRole {
-    /// Stays in towns, wanders, chats, sits and emotes.
+    /// Stays in towns: strolls, shops, chats, sits, emotes, goes AFK.
     Town,
     /// Hunts monsters in the fields.
     Fighter,
@@ -169,36 +168,13 @@ pub enum BotRole {
     Vendor,
 }
 
-/// A chat message a bot has heard, used for replying to other bots/players.
-#[derive(Clone, Debug)]
-pub struct BotChatMemoryEntry {
-    pub sender_entity: Entity,
-    pub sender_name: String,
-    pub message: String,
-    pub topic: bot_chat::BotChatTopic,
-    pub received_at: Instant,
-}
-
-/// Stores recent chat a bot has heard so it can reply in conversation.
+/// What a bot remembers about the chat it answered, so it does not answer
+/// too often or repeat itself to the same person.
 #[derive(Component, Default)]
 pub struct BotChatMemory {
-    pub entries: std::collections::VecDeque<BotChatMemoryEntry>,
     pub last_reply_time: Option<Instant>,
-}
-
-impl BotChatMemory {
-    pub fn replyable_entry(&self, own_entity: Entity) -> Option<&BotChatMemoryEntry> {
-        self.replyable_entry_at(own_entity, Instant::now())
-    }
-
-    /// `replyable_entry` against a caller-supplied clock reading, so a system
-    /// can read the clock once per run instead of once per entry.
-    pub fn replyable_entry_at(&self, own_entity: Entity, now: Instant) -> Option<&BotChatMemoryEntry> {
-        self.entries.iter().find(|entry| {
-            now.saturating_duration_since(entry.received_at) < BOT_CHAT_MEMORY_AGE
-                && entry.sender_entity != own_entity
-        })
-    }
+    /// (speaker, topic, when) of recent replies.
+    pub replied_to: std::collections::VecDeque<(Entity, bot_chat::BotChatTopic, Instant)>,
 }
 
 /// Tracks a pending party invite decision so bots accept with a natural delay.
@@ -229,24 +205,20 @@ pub struct BotBehaviorConfig {
     pub use_heal_skill_min_health_percent: f32,
     pub party_heal_min_health_percent: f32,
     pub pickup_item_score: f32,
+    /// Hunters take a break now and then (above resting, so a break that
+    /// sits down is not pre-empted by the HP rest).
+    pub take_break_score: f32,
     pub sit_recover_hp_score: f32,
+    /// Walking to a merchant: after resting, before looking for monsters.
+    pub restock_score: f32,
+    pub party_invite_score: f32,
     pub use_buff_skill_score: f32,
     pub find_nearby_target_score: f32,
-    pub chat_score: f32,
-    pub chat_chance_per_tick: f32,
-    pub visit_npc_score: f32,
-    pub visit_npc_chance_per_tick: f32,
-    pub party_invite_score: f32,
-    pub reply_to_chat_score: f32,
-    pub reply_chance_per_tick: f32,
+    /// Town routine for hunters standing in a town with nothing to fight.
+    pub town_life_score: f32,
     pub follow_party_leader_score: f32,
     pub follow_party_leader_distance: f32,
     pub attack_party_target_score: f32,
-    pub wander_town_score: f32,
-    pub sit_in_town_score: f32,
-    pub sit_in_town_chance_per_tick: f32,
-    pub emote_score: f32,
-    pub emote_chance_per_tick: f32,
     /// Minimum party invite accept delay, for natural behaviour.
     pub accept_invite_delay_min: Duration,
     pub accept_invite_delay_max: Duration,
@@ -263,24 +235,16 @@ impl Default for BotBehaviorConfig {
             use_heal_skill_min_health_percent: 0.45,
             party_heal_min_health_percent: 0.6,
             pickup_item_score: 0.5,
+            take_break_score: 0.45,
             sit_recover_hp_score: 0.4,
+            restock_score: 0.38,
+            party_invite_score: 0.35,
             use_buff_skill_score: 0.3,
             find_nearby_target_score: 0.2,
-            chat_score: 0.18,
-            chat_chance_per_tick: 0.0025,
-            visit_npc_score: 0.12,
-            visit_npc_chance_per_tick: 0.0015,
-            party_invite_score: 0.35,
-            reply_to_chat_score: 0.22,
-            reply_chance_per_tick: 0.02,
+            town_life_score: 0.15,
             follow_party_leader_score: 0.95,
             follow_party_leader_distance: 350.0,
             attack_party_target_score: 0.92,
-            wander_town_score: 0.35,
-            sit_in_town_score: 0.1,
-            sit_in_town_chance_per_tick: 0.001,
-            emote_score: 0.08,
-            emote_chance_per_tick: 0.002,
             accept_invite_delay_min: Duration::from_secs(1),
             accept_invite_delay_max: Duration::from_secs(3),
         }
@@ -293,7 +257,14 @@ impl Plugin for BotPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         app.init_resource::<BotAssistRequests>()
             .init_resource::<LastEmoteState>()
+            .init_resource::<BotEmotes>()
+            .init_resource::<BotPotionTable>()
+            .init_resource::<BotChatZoneLimits>()
+            .init_resource::<BotGreetLimiter>()
+            .init_resource::<BotPlayerInvites>()
             .add_message::<PlayerEmoteEvent>()
+            // Lookup tables built from the game data once it is loaded.
+            .add_systems(Startup, (bot_emotes_init_system, bot_potion_table_init_system))
             // Same schedule as the bot scorers/actions below: big-brain only
             // chains Scorers -> Thinkers -> Actions inside its own schedule,
             // so thinkers pick from this frame's scores and actions run the
@@ -309,30 +280,24 @@ impl Plugin for BotPlugin {
                             action_attack_random_nearby_target,
                             action_attack_target,
                             action_attack_threat,
-                            action_bot_chat_local,
-                            action_bot_chat_reply,
-                            action_bot_emote,
                             action_find_monster_spawn,
                             action_follow_party_leader,
-                        )
-                            .in_set(BigBrainSet::Actions),
-                        (
                             action_join_zone,
                             action_party_invite_nearby_bot,
                             action_pickup_nearest_item_drop,
-                            action_revive_current_zone,
-                            action_sit_in_town,
-                            action_sit_recover_hp,
-                            action_snowball_fight,
-                            action_use_attack_skill,
-                            action_use_buff_skill,
-                            action_use_heal_skill,
                         )
                             .in_set(BigBrainSet::Actions),
                         (
-                            action_visit_npc,
+                            action_restock_trip,
+                            action_revive_current_zone,
+                            action_sit_recover_hp,
+                            action_snowball_fight,
+                            action_take_break,
+                            action_town_life,
+                            action_use_attack_skill,
+                            action_use_buff_skill,
+                            action_use_heal_skill,
                             action_vendor_idle,
-                            action_wander_town,
                         )
                             .in_set(BigBrainSet::Actions),
                     ),
@@ -342,37 +307,41 @@ impl Plugin for BotPlugin {
                             score_find_nearby_item_drop_system,
                             score_find_nearby_target,
                             score_has_party_invite,
+                            score_in_town_zone,
                             score_is_dead,
                             score_is_teleporting,
+                            score_needs_restock,
                             score_should_attack_party_target,
-                            score_should_attack_target,
-                            score_should_bot_chat,
-                            score_should_emote,
                         )
                             .in_set(BigBrainSet::Scorers),
                         (
+                            score_should_attack_target,
                             score_should_follow_party_leader,
-                            score_should_reply_to_chat,
-                            score_should_sit_in_town,
                             score_should_sit_recover_hp,
+                            score_should_take_break,
                             score_should_use_attack_skill,
                             score_should_use_buff_skill,
                             score_should_use_heal_skill,
-                            score_should_visit_npc,
-                            score_should_wander_town,
                             score_threat_is_not_target,
                         )
                             .in_set(BigBrainSet::Scorers),
                     ),
-                    bot_auto_accept_party_invites_system,
-                    bot_auto_progression_system,
-                    bot_call_for_help_system,
-                    bot_chat_capture_system,
-                    bot_cheer_kill_system,
-                    bot_greet_system,
-                    player_emote_detect_system,
-                    bot_react_emote_system,
-                    bot_vendor_ad_system,
+                    (
+                        bot_assign_personality_system,
+                        bot_auto_accept_party_invites_system,
+                        bot_auto_progression_system,
+                        bot_call_for_help_system,
+                        bot_chat_hear_system,
+                        bot_chatter_system,
+                        bot_cheer_kill_system,
+                        bot_greet_system,
+                        bot_invite_player_system,
+                        bot_level_up_system,
+                        player_emote_detect_system,
+                        bot_react_emote_system,
+                        bot_upkeep_system,
+                        bot_vendor_ad_system,
+                    ),
                 ),
             );
     }
@@ -439,6 +408,8 @@ pub fn bot_thinker_with_role(config: &BotBehaviorConfig, role: BotRole) -> Think
     }
 }
 
+/// Hunters. Chat is not a thinker choice (see `bot_chat`): bots talk while
+/// doing whatever they are doing.
 fn bot_combat_thinker(config: &BotBehaviorConfig) -> ThinkerBuilder {
     Thinker::build()
         .picker(Highest)
@@ -494,10 +465,22 @@ fn bot_combat_thinker(config: &BotBehaviorConfig) -> ThinkerBuilder {
             PickupNearestItemDrop,
         )
         .when(
+            ShouldTakeBreak {
+                score: config.take_break_score,
+            },
+            TakeBreak,
+        )
+        .when(
             ShouldSitRecoverHp {
                 score: config.sit_recover_hp_score,
             },
             SitRecoverHp,
+        )
+        .when(
+            NeedsRestock {
+                score: config.restock_score,
+            },
+            RestockTrip::default(),
         )
         .when(
             CanPartyInviteNearbyBot {
@@ -512,35 +495,22 @@ fn bot_combat_thinker(config: &BotBehaviorConfig) -> ThinkerBuilder {
             UseBuffSkill,
         )
         .when(
-            ShouldReplyToChat {
-                score: config.reply_to_chat_score,
-                chance_per_tick: config.reply_chance_per_tick,
-            },
-            BotChatReply,
-        )
-        .when(
             FindNearbyTarget {
                 score: config.find_nearby_target_score,
             },
             AttackRandomNearbyTarget,
         )
         .when(
-            ShouldBotChat {
-                score: config.chat_score,
-                chance_per_tick: config.chat_chance_per_tick,
+            InTownZone {
+                score: config.town_life_score,
             },
-            BotChatLocal,
-        )
-        .when(
-            ShouldVisitNpc {
-                score: config.visit_npc_score,
-                chance_per_tick: config.visit_npc_chance_per_tick,
-            },
-            VisitNpc,
+            TownLife::default(),
         )
         .otherwise(FindMonsterSpawns)
 }
 
+/// Town folk: the `TownLife` routine, interrupted only by revives, zone
+/// joins, following their party and fighting back.
 fn bot_town_thinker(config: &BotBehaviorConfig) -> ThinkerBuilder {
     Thinker::build()
         .picker(Highest)
@@ -560,47 +530,13 @@ fn bot_town_thinker(config: &BotBehaviorConfig) -> ThinkerBuilder {
             AttackThreat,
         )
         .when(
-            ShouldReplyToChat {
-                score: config.reply_to_chat_score,
-                chance_per_tick: config.reply_chance_per_tick,
+            ShouldAttackTarget {
+                min_score: config.attack_target_min_score,
+                max_score: config.attack_target_max_score,
             },
-            BotChatReply,
+            ActionAttackTarget,
         )
-        .when(
-            ShouldBotChat {
-                score: config.chat_score,
-                chance_per_tick: config.chat_chance_per_tick,
-            },
-            BotChatLocal,
-        )
-        .when(
-            ShouldWanderTown {
-                score: config.wander_town_score,
-            },
-            WanderTown,
-        )
-        .when(
-            ShouldVisitNpc {
-                score: config.visit_npc_score,
-                chance_per_tick: config.visit_npc_chance_per_tick,
-            },
-            VisitNpc,
-        )
-        .when(
-            ShouldSitInTown {
-                score: config.sit_in_town_score,
-                chance_per_tick: config.sit_in_town_chance_per_tick,
-            },
-            SitInTown,
-        )
-        .when(
-            ShouldEmote {
-                score: config.emote_score,
-                chance_per_tick: config.emote_chance_per_tick,
-            },
-            BotEmote,
-        )
-        .otherwise(WanderTown)
+        .otherwise(TownLife::default())
 }
 
 pub fn bot_snowball_fight() -> ThinkerBuilder {
@@ -609,8 +545,18 @@ pub fn bot_snowball_fight() -> ThinkerBuilder {
         .otherwise(SnowballFight::default())
 }
 
+const PARTY_ACCEPT_LINES: &[&str] = &[
+    "Thanks for the invite!",
+    "Sure, let's go!",
+    "Thanks {name}!",
+    "Ty for the party.",
+    "Joined! Let's hunt.",
+    "Hi all!",
+];
+
 /// Delayed party invite acceptance so bots react naturally, and reply in chat
 /// when a player invites them.
+#[allow(clippy::type_complexity)]
 pub fn bot_auto_accept_party_invites_system(
     mut commands: Commands,
     query: Query<
@@ -621,7 +567,7 @@ pub fn bot_auto_accept_party_invites_system(
         ),
         (With<BotBuild>, With<ClientEntity>, Without<LlmBuddyBot>, Without<VendorBot>, Without<Dead>),
     >,
-    query_bot: Query<(&ClientEntity, &CharacterInfo, &Position)>,
+    query_bot: Query<(&ClientEntity, &CharacterInfo, &Position, Option<&BotPersonality>)>,
     query_inviter_is_bot: Query<(), (With<BotBuild>, Without<LlmBuddyBot>)>,
     mut party_events: MessageWriter<PartyEvent>,
     mut server_messages: ResMut<ServerMessages>,
@@ -668,63 +614,32 @@ pub fn bot_auto_accept_party_invites_system(
 
         // Reply in chat when invited by a player so it feels alive.
         if query_inviter_is_bot.get(owner_entity).is_err() {
-            let Ok((client_entity, character_info, position)) = query_bot.get(bot_entity) else {
+            let Ok((client_entity, character_info, position, personality)) =
+                query_bot.get(bot_entity)
+            else {
                 continue;
             };
+            let inviter_name = query_bot
+                .get(owner_entity)
+                .map_or("", |(_, inviter_info, _, _)| inviter_info.name.as_str());
 
-            let message = random_chat_line(&mut rng).to_string();
-            server_messages.send_entity_message(
+            let template = PARTY_ACCEPT_LINES.choose(&mut rng).copied().unwrap_or("");
+            let line = fill_template(template, &[("name", first_name(inviter_name))]);
+            let message = match personality {
+                Some(personality) => personality.stylize(&mut rng, &line),
+                None => line,
+            };
+
+            bot_say(
+                &mut server_messages,
+                &mut chat_message_events,
+                bot_entity,
                 client_entity,
-                ServerMessage::LocalChat {
-                    entity_id: client_entity.id,
-                    text: message.clone(),
-                },
-            );
-
-            chat_message_events.write(ChatMessageEvent {
-                sender_entity: bot_entity,
-                sender_name: character_info.name.clone(),
-                zone_id: position.zone_id,
+                &character_info.name,
+                position.zone_id,
                 message,
-                chat_type: ChatType::Local,
-            });
-        }
-    }
-}
-
-/// Captures nearby chat into each bot's memory so bots can reply in
-/// conversation.
-pub fn bot_chat_capture_system(
-    mut query: Query<
-        (Entity, &Position, &mut BotChatMemory),
-        (With<BotBuild>, Without<LlmBuddyBot>, Without<Dead>),
-    >,
-    mut chat_events: MessageReader<ChatMessageEvent>,
-) {
-    for event in chat_events.read() {
-        if event.chat_type != ChatType::Local && event.chat_type != ChatType::Shout {
-            continue;
-        }
-
-        // Pure per message: classify once per event, on the first recipient.
-        let mut topic = None;
-
-        for (entity, position, mut memory) in query.iter_mut() {
-            if position.zone_id != event.zone_id || event.sender_entity == entity {
-                continue;
-            }
-
-            memory.entries.push_back(BotChatMemoryEntry {
-                sender_entity: event.sender_entity,
-                sender_name: event.sender_name.clone(),
-                message: event.message.clone(),
-                topic: *topic.get_or_insert_with(|| classify_chat_topic(&event.message)),
-                received_at: Instant::now(),
-            });
-
-            if memory.entries.len() > BOT_CHAT_MEMORY_SIZE {
-                memory.entries.pop_front();
-            }
+                false,
+            );
         }
     }
 }

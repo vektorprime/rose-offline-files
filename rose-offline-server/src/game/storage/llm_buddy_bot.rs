@@ -61,7 +61,7 @@ pub struct LlmBuddyBotStorage {
     pub zone_id: u16,
     /// Current position
     pub position: PositionData,
-    /// Follow distance
+    /// Follow distance in server units (cm); clamped to a sensible range when used
     #[serde(default = "default_follow_distance")]
     pub follow_distance: f32,
     /// Whether the bot is currently following
@@ -114,7 +114,8 @@ impl Default for VitalPoints {
 }
 
 fn default_follow_distance() -> f32 {
-    50.0  // Reduced from 300.0 to 50.0 for closer following
+    // Same as the LlmBuddyBot component default (3 m)
+    300.0
 }
 
 fn default_stamina() -> u32 {

@@ -8,7 +8,10 @@ use std::{
 
 use bevy::{
     math::Vec3Swizzles,
-    prelude::{Commands, Component, Entity, MessageReader, MessageWriter, Query, ResMut, Resource, With, Without},
+    prelude::{
+        Commands, Component, Entity, MessageReader, MessageWriter, Query, Res, ResMut, Resource,
+        With, Without,
+    },
 };
 use rand::{seq::SliceRandom, Rng};
 use rose_data::MotionId;
@@ -16,14 +19,18 @@ use rose_data::MotionId;
 use crate::game::{
     components::{
         CharacterInfo, ChatType, ClientEntity, ClientEntityType, Command, CommandData, Dead,
-        LlmBuddyBot, NextCommand, Position,
+        LlmBuddyBot, Position,
     },
     events::{ChatMessageEvent, PlayerEmoteEvent},
     messages::server::ServerMessage,
     resources::ServerMessages,
 };
 
-use super::{is_idle_for_duration, BotBuild, VendorBot, IDLE_DURATION};
+use super::{
+    bot_emotes::{bot_play_emote_kind, BotEmoteKind, BotEmotes},
+    bot_personality::{BotActivity, BotLife, BotPersonality},
+    is_idle_for_duration, BotBuild, VendorBot, IDLE_DURATION,
+};
 
 /// Maximum distance to react to a player's emote.
 const REACT_RANGE: f32 = 500.0;
@@ -34,8 +41,19 @@ const REACT_CHANCE: f64 = 0.7;
 /// Chance to also say a line when reacting.
 const CHAT_CHANCE: f64 = 0.3;
 
-/// Motion ids a bot may respond with: wave, dance, cheer, bow, clap.
-const RESPONSE_MOTIONS: &[u16] = &[15, 16, 17, 18, 19];
+/// The kind of emote a bot answers an emote of `kind` with.
+fn response_kind(rng: &mut impl Rng, kind: BotEmoteKind) -> BotEmoteKind {
+    let options: &[BotEmoteKind] = match kind {
+        BotEmoteKind::Greet => &[BotEmoteKind::Greet, BotEmoteKind::Bow],
+        BotEmoteKind::Cheer => &[BotEmoteKind::Cheer],
+        BotEmoteKind::Dance => &[BotEmoteKind::Dance, BotEmoteKind::Cheer, BotEmoteKind::Laugh],
+        BotEmoteKind::Laugh => &[BotEmoteKind::Laugh],
+        BotEmoteKind::Bow => &[BotEmoteKind::Bow, BotEmoteKind::Greet],
+        BotEmoteKind::Sad => &[BotEmoteKind::Sad, BotEmoteKind::Bow],
+        BotEmoteKind::Any => &[BotEmoteKind::Any],
+    };
+    options.choose(rng).copied().unwrap_or(BotEmoteKind::Any)
+}
 
 const RESPONSE_LINES: &[&str] = &[
     "Thanks!",
@@ -91,6 +109,7 @@ pub fn player_emote_detect_system(
     }
 }
 
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn bot_react_emote_system(
     mut commands: Commands,
     mut emote_events: MessageReader<PlayerEmoteEvent>,
@@ -106,6 +125,8 @@ pub fn bot_react_emote_system(
         ),
         (With<BotBuild>, Without<LlmBuddyBot>, Without<VendorBot>, Without<Dead>),
     >,
+    query_personality: Query<(Option<&BotPersonality>, Option<&BotLife>)>,
+    emotes: Res<BotEmotes>,
     mut server_messages: ResMut<ServerMessages>,
     mut chat_message_events: MessageWriter<ChatMessageEvent>,
 ) {
@@ -124,6 +145,7 @@ pub fn bot_react_emote_system(
         }
 
         let source_pos = source_position.position.xy();
+        let reply_kind = emotes.kind_of(MotionId::new(event.motion_id));
 
         for (bot_entity, client_entity, character_info, position, command, react_state) in
             query_bots.iter_mut()
@@ -145,17 +167,38 @@ pub fn bot_react_emote_system(
                     .map_or(false, |last| {
                         now.saturating_duration_since(last) < REACT_COOLDOWN
                     });
-            if on_cooldown || !rng.gen_bool(REACT_CHANCE) {
+            let (personality, life) = query_personality
+                .get(bot_entity)
+                .unwrap_or((None, None));
+            if life.is_some_and(|life| life.activity == BotActivity::Afk) {
+                continue;
+            }
+            let react_chance = personality.map_or(REACT_CHANCE, |personality| {
+                REACT_CHANCE * (0.4 + 0.6 * personality.sociability as f64)
+            });
+            if on_cooldown || !rng.gen_bool(react_chance) {
                 continue;
             }
 
-            let motion_id = RESPONSE_MOTIONS.choose(&mut rng).copied().unwrap_or(17);
-            commands
-                .entity(bot_entity)
-                .insert(NextCommand::with_emote(MotionId::new(motion_id), true));
+            let kind = response_kind(&mut rng, reply_kind);
+            if !bot_play_emote_kind(
+                &mut commands,
+                &mut server_messages,
+                &emotes,
+                &mut rng,
+                bot_entity,
+                client_entity,
+                kind,
+            ) {
+                continue;
+            }
 
             if rng.gen_bool(CHAT_CHANCE) {
                 let line = RESPONSE_LINES.choose(&mut rng).unwrap_or(&"").to_string();
+                let line = match personality {
+                    Some(personality) => personality.stylize(&mut rng, &line),
+                    None => line,
+                };
                 server_messages.send_entity_message(
                     client_entity,
                     ServerMessage::LocalChat {

@@ -3,11 +3,15 @@
 //! This module contains the Bevy systems that process commands from the REST API
 //! and integrate LLM-controlled buddy bots with the game loop.
 
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use bevy::{
+    ecs::query::QueryData,
     prelude::*,
-    math::Vec3,
+    math::{Vec3, Vec3Swizzles},
 };
 use bevy::math::Vec2;
 use chrono::Utc;
@@ -23,19 +27,24 @@ use crate::game::{
         GetBotSkillsResponse, GetChatHistoryResponse, GetPlayerStatusResponse, GetZoneInfoResponse,
         LlmBotCommand, ResponseSender,
     },
-    bundles::client_entity_leave_zone,
+    bundles::{client_entity_leave_zone, skill_target_filter_allows, skill_use_requirements_met},
     components::{
-        ChatMessage as BotChatMessage, ChatType as BotChatType, ClientEntity, ClientEntitySector,
-        Command, CommandCastSkillTarget, CommandData, Dead, HealthPoints, Inventory, LlmBuddyBot,
-        ManaPoints, NextCommand, Position, Stamina,
+        BotBehaviorMode, CharacterInfo, ChatMessage as BotChatMessage, ChatType as BotChatType,
+        ClanMembership, ClientEntity, ClientEntitySector, ClientEntityType, Command,
+        CommandCastSkillTarget, CommandData, Cooldowns, DamageSources, Dead, Equipment,
+        ExperiencePoints, GameClient, HealthPoints, Inventory, LlmBuddyBot, ManaPoints,
+        NextCommand, Party, PartyMembership, Position, SkillList, Stamina, StatusEffects, Team,
     },
     messages::server::ServerMessage,
     resources::{ClientEntityList, GameData, ServerMessages},
     storage::llm_buddy_bot::LlmBuddyBotStorage,
 };
 
-use rose_data::{SkillId, ZoneId};
-use rose_game_common::components::{AbilityValues, MoveMode};
+use rose_data::{AbilityType, SkillData, SkillId, SkillType, StatusEffectType, ZoneId};
+use rose_game_common::{
+    components::{AbilityValues, MoveMode},
+    messages::PartyRejectInviteReason,
+};
 
 /// Resource holding the LLM Bot Manager for command processing
 ///
@@ -1398,132 +1407,616 @@ fn parse_move_mode(mode: &str) -> Option<MoveMode> {
     }
 }
 
-/// System that makes LLM buddy bots follow their assigned player
-///
-/// This system checks each buddy bot's distance from their assigned player
-/// and issues move commands if they're too far away.
-pub fn llm_buddy_follow_system(
-    mut bot_query: Query<
-        (&LlmBuddyBot, &Position, &Command, &mut NextCommand),
-        (Without<Dead>,),
-    >,
-    player_query: Query<(&Position, &ClientEntity, &crate::game::components::CharacterInfo), Without<LlmBuddyBot>>,
-    bot_manager: Res<LlmBotManagerResource>,
-) {
-    // Bot entities in map order; the lock is released before the player scans.
-    let bot_entities: Vec<Entity> = bot_manager
-        .bots_map
-        .read()
-        .values()
-        .map(|bot_info| bot_info.entity)
-        .collect();
+/// How often a buddy bot re-evaluates heals, buffs and combat.
+const BUDDY_THINK_INTERVAL: Duration = Duration::from_millis(400);
+/// Heal the assigned player below this fraction of their max health.
+const BUDDY_HEAL_PLAYER_HEALTH_RATIO: f32 = 0.7;
+/// Heal itself below this fraction of its max health.
+const BUDDY_HEAL_SELF_HEALTH_RATIO: f32 = 0.5;
+/// Buffs are only cast while this fraction of mana is left for heals.
+const BUDDY_BUFF_MIN_MANA_RATIO: f32 = 0.35;
+/// A player further away than this is not chased down to be buffed.
+const BUDDY_BUFF_RANGE_CM: f32 = 1500.0;
+/// Monsters that hit the player or the bot this recently are fought back.
+const BUDDY_RECENT_ATTACK_SECS: f64 = 5.0;
+/// Only monsters this close to the player are fought.
+const BUDDY_ASSIST_RANGE_CM: f32 = 1500.0;
+/// Aggressive bots also engage any monster this close to the player.
+const BUDDY_AGGRESSIVE_RANGE_CM: f32 = 1000.0;
+/// A fighting bot breaks off and runs back once the player is this far away.
+/// Larger than the assist range plus a ranged attack, so it does not re-engage at once.
+const BUDDY_LEASH_CM: f32 = 3000.0;
+/// A running follow move is re-aimed once the player is this far from its destination.
+const BUDDY_FOLLOW_RETARGET_MIN_CM: f32 = 400.0;
 
-    // For each bot that is in follow mode
-    for entity in bot_entities {
-        // Get bot's data
-        let Ok((buddy_bot, bot_position, command, mut next_command)) = bot_query.get_mut(entity)
+/// A buddy bot, as driven by the built-in follow / support behaviour.
+#[derive(QueryData)]
+#[query_data(mutable)]
+pub struct BuddyBotQuery<'w> {
+    entity: Entity,
+    buddy: &'w mut LlmBuddyBot,
+    next_command: &'w mut NextCommand,
+    command: &'w Command,
+    position: &'w Position,
+    client_entity: &'w ClientEntity,
+    ability_values: &'w AbilityValues,
+    health_points: &'w HealthPoints,
+    mana_points: &'w ManaPoints,
+    move_mode: &'w MoveMode,
+    team: &'w Team,
+    skill_list: &'w SkillList,
+    status_effects: &'w StatusEffects,
+    clan_membership: Option<&'w ClanMembership>,
+    party_membership: Option<&'w PartyMembership>,
+    cooldowns: Option<&'w Cooldowns>,
+    equipment: Option<&'w Equipment>,
+    experience_points: Option<&'w ExperiencePoints>,
+    inventory: Option<&'w Inventory>,
+    stamina: Option<&'w Stamina>,
+    damage_sources: Option<&'w DamageSources>,
+}
+
+/// The player a buddy bot is assigned to.
+#[derive(QueryData)]
+pub struct BuddyPlayerQuery<'w> {
+    entity: Entity,
+    character_info: &'w CharacterInfo,
+    position: &'w Position,
+    client_entity: &'w ClientEntity,
+    command: &'w Command,
+    ability_values: &'w AbilityValues,
+    health_points: &'w HealthPoints,
+    status_effects: &'w StatusEffects,
+    team: &'w Team,
+    clan_membership: Option<&'w ClanMembership>,
+    party_membership: Option<&'w PartyMembership>,
+    damage_sources: Option<&'w DamageSources>,
+    dead: Option<&'w Dead>,
+}
+
+/// Built-in behaviour of LLM buddy bots. It needs neither the REST API nor an LLM:
+/// each bot follows its assigned player, heals and buffs them with its own skills and,
+/// in Defensive / Aggressive mode, fights what attacks them.
+///
+/// Bots under manual API control (`is_following == false`) are left alone. Bringing a
+/// bot into the player's zone, catch-up teleports, revives and the auto-party are done
+/// by `llm_bot_teleport_to_player_on_login_system`.
+pub fn llm_buddy_follow_system(
+    mut bot_query: Query<BuddyBotQuery, (Without<Dead>, Without<GameClient>)>,
+    player_query: Query<BuddyPlayerQuery, (With<GameClient>, Without<LlmBuddyBot>)>,
+    target_query: Query<(&ClientEntity, &Position, &HealthPoints, &Team), Without<Dead>>,
+    client_entity_list: Res<ClientEntityList>,
+    game_data: Res<GameData>,
+    time: Res<Time>,
+) {
+    let now = Instant::now();
+    let now_seconds = time.elapsed_secs_f64();
+
+    for mut bot in bot_query.iter_mut() {
+        if !bot.buddy.is_following {
+            continue;
+        }
+
+        let Some(player) = player_query
+            .iter()
+            .find(|player| player.character_info.name == bot.buddy.assigned_player_name)
         else {
             continue;
         };
 
-        // Skip if not following
-        if !buddy_bot.is_following {
-           //  log::debug!("[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} not in follow mode (is_following=false)", bot_id);
+        if player.position.zone_id != bot.position.zone_id {
+            // The teleport system brings the bot over once the player has joined the zone.
             continue;
         }
 
-        // Skip if currently executing a command (let it finish)
-        if !command.is_stop() {
-           //  log::debug!("[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} has active command, skipping follow (command={:?})", bot_id, command);
-            continue;
-        }
+        if bot
+            .buddy
+            .next_think_at
+            .map_or(true, |think_at| now >= think_at)
+        {
+            bot.buddy.next_think_at = Some(now + BUDDY_THINK_INTERVAL);
 
-        // Find the assigned player by name or ID
-        let mut player_data: Option<(Vec3, rose_data::ZoneId)> = None;
-        
-        // Try to find by name first (more reliable if ID changes)
-        for (pos, _, char_info) in player_query.iter() {
-            if char_info.name == buddy_bot.assigned_player_name {
-                player_data = Some((pos.position, pos.zone_id));
-                break;
-            }
-        }
-        
-        // If not found by name, try by ID
-        if player_data.is_none() {
-            for (pos, client_entity, _) in player_query.iter() {
-                if client_entity.id.0 == buddy_bot.assigned_player_id as usize {
-                    player_data = Some((pos.position, pos.zone_id));
-                    break;
-                }
+            let action = buddy_choose_heal(now, &game_data, &bot, &player)
+                .or_else(|| buddy_choose_buff(now, &game_data, &bot, &player))
+                .or_else(|| {
+                    buddy_choose_attack(
+                        &bot,
+                        &player,
+                        &target_query,
+                        &client_entity_list,
+                        now_seconds,
+                    )
+                });
+            if let Some(action) = action {
+                // follow_goal is kept: a cast restores the follow move it interrupted.
+                *bot.next_command = action;
+                continue;
             }
         }
 
-        // If we couldn't find the player, skip
-        let Some((player_pos, player_zone)) = player_data else {
-           //  log::debug!("[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} cannot find player '{}' (id: {}) in world",
-            //    bot_id, buddy_bot.assigned_player_name, buddy_bot.assigned_player_id);
-            continue;
-        };
-        
-        // Skip if in different zones
-        if player_zone != bot_position.zone_id {
-           //  log::debug!("[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} in zone {:?} but player '{}' in zone {:?}, skipping",
-            //    bot_id, bot_position.zone_id, buddy_bot.assigned_player_name, player_zone);
+        buddy_follow_player(&mut bot, &player);
+    }
+}
+
+/// Moves the bot back to the player when it is further away than its follow distance,
+/// stopping on its own side of the player at half that distance.
+fn buddy_follow_player(bot: &mut BuddyBotQueryItem, player: &BuddyPlayerQueryItem) {
+    let follow_distance = bot.buddy.follow_distance_cm();
+    let bot_xy = bot.position.position.xy();
+    let player_xy = player.position.position.xy();
+    let distance = bot_xy.distance(player_xy);
+
+    let fighting = matches!(bot.command.command, CommandData::Attack { .. })
+        || matches!(bot.next_command.command, Some(CommandData::Attack { .. }));
+    if fighting {
+        if distance <= BUDDY_LEASH_CM {
+            return;
+        }
+    } else if !buddy_is_free(bot) {
+        // Casting, picking something up, standing up...
+        return;
+    }
+
+    let running_follow_move = bot.buddy.follow_goal.filter(|_| {
+        matches!(bot.command.command, CommandData::Move { target: None, .. })
+            || matches!(
+                bot.next_command.command,
+                Some(CommandData::Move { target: None, .. })
+            )
+    });
+    let should_move = match running_follow_move {
+        Some(goal) if !fighting => {
+            goal.xy().distance(player_xy) > follow_distance.max(BUDDY_FOLLOW_RETARGET_MIN_CM)
+        }
+        _ => distance > follow_distance,
+    };
+
+    if !should_move {
+        if running_follow_move.is_none() && bot.buddy.follow_goal.is_some() {
+            bot.buddy.follow_goal = None;
+        }
+        return;
+    }
+
+    let away_from_player = (bot_xy - player_xy).try_normalize().unwrap_or(Vec2::NEG_Y);
+    let stop_xy = player_xy + away_from_player * (follow_distance * 0.5);
+    let destination = Vec3::new(stop_xy.x, stop_xy.y, player.position.position.z);
+
+    *bot.next_command = NextCommand::with_move(destination, None, Some(MoveMode::Run));
+    bot.buddy.follow_goal = Some(destination);
+}
+
+/// True when the bot is idle or running its own follow move, so it can take new orders.
+fn buddy_is_free(bot: &BuddyBotQueryItem) -> bool {
+    let following = bot.buddy.follow_goal.is_some();
+
+    let command_free = match &bot.command.command {
+        CommandData::Stop { .. }
+        | CommandData::Sit
+        | CommandData::Sitting
+        | CommandData::Emote { .. } => true,
+        CommandData::Move { target: None, .. } => following,
+        _ => false,
+    };
+    let next_command_free = match &bot.next_command.command {
+        None | Some(CommandData::Stop { .. }) => true,
+        Some(CommandData::Move { target: None, .. }) => following,
+        _ => false,
+    };
+
+    command_free && next_command_free
+}
+
+fn buddy_is_casting(bot: &BuddyBotQueryItem) -> bool {
+    matches!(bot.command.command, CommandData::CastSkill { .. })
+        || matches!(
+            bot.next_command.command,
+            Some(CommandData::CastSkill { .. })
+        )
+}
+
+fn health_ratio(health_points: &HealthPoints, ability_values: &AbilityValues) -> f32 {
+    let max_health = ability_values.get_max_health();
+    if max_health > 0 {
+        health_points.hp as f32 / max_health as f32
+    } else {
+        1.0
+    }
+}
+
+fn mana_ratio(mana_points: &ManaPoints, ability_values: &AbilityValues) -> f32 {
+    let max_mana = ability_values.get_max_mana();
+    if max_mana > 0 {
+        mana_points.mp as f32 / max_mana as f32
+    } else {
+        0.0
+    }
+}
+
+/// Every skill the bot has learned.
+fn buddy_skills<'a>(
+    game_data: &'a GameData,
+    skill_list: &'a SkillList,
+) -> impl Iterator<Item = &'a SkillData> + 'a {
+    skill_list
+        .pages
+        .iter()
+        .flat_map(|page| page.skills.iter())
+        .filter_map(|skill_slot| skill_slot.as_ref())
+        .filter_map(move |skill_id| game_data.skills.get_skill(*skill_id))
+}
+
+fn skill_status_effect_types<'a>(
+    game_data: &'a GameData,
+    skill_data: &'a SkillData,
+) -> impl Iterator<Item = StatusEffectType> + 'a {
+    skill_data
+        .status_effects
+        .iter()
+        .flatten()
+        .filter_map(move |&status_effect_id| {
+            game_data.status_effects.get_status_effect(status_effect_id)
+        })
+        .map(|status_effect_data| status_effect_data.status_effect_type)
+}
+
+fn skill_heals_instantly(skill_data: &SkillData) -> bool {
+    skill_data
+        .add_ability
+        .iter()
+        .flatten()
+        .any(|add_ability| add_ability.ability_type == AbilityType::Health)
+}
+
+/// Whether `skill_data` restores health, instantly or over time.
+fn skill_heals(game_data: &GameData, skill_data: &SkillData) -> bool {
+    skill_heals_instantly(skill_data)
+        || skill_status_effect_types(game_data, skill_data)
+            .any(|status_effect_type| matches!(status_effect_type, StatusEffectType::IncreaseHp))
+}
+
+/// A heal over time does nothing on a target that already has it running.
+fn heal_takes_effect(
+    game_data: &GameData,
+    skill_data: &SkillData,
+    target_status_effects: &StatusEffects,
+) -> bool {
+    skill_heals_instantly(skill_data)
+        || skill_status_effect_types(game_data, skill_data).any(|status_effect_type| {
+            target_status_effects
+                .get_status_effect_value(status_effect_type)
+                .is_none()
+        })
+}
+
+fn is_buff_status_effect(status_effect_type: StatusEffectType) -> bool {
+    matches!(
+        status_effect_type,
+        StatusEffectType::IncreaseMaxHp
+            | StatusEffectType::IncreaseMaxMp
+            | StatusEffectType::IncreaseMoveSpeed
+            | StatusEffectType::IncreaseAttackSpeed
+            | StatusEffectType::IncreaseAttackPower
+            | StatusEffectType::IncreaseDefence
+            | StatusEffectType::IncreaseResistance
+            | StatusEffectType::IncreaseHit
+            | StatusEffectType::IncreaseCritical
+            | StatusEffectType::IncreaseAvoid
+            | StatusEffectType::ShieldDamage
+            | StatusEffectType::AdditionalDamageRate
+    )
+}
+
+/// Whether `skill_data` only grants buffs. Cures and other clears are excluded: their
+/// effect never shows as active, so they would be recast forever.
+fn skill_is_buff(game_data: &GameData, skill_data: &SkillData) -> bool {
+    if !matches!(
+        skill_data.skill_type,
+        SkillType::SelfBoundDuration
+            | SkillType::SelfStateDuration
+            | SkillType::TargetBoundDuration
+            | SkillType::TargetStateDuration
+            | SkillType::SelfBound
+            | SkillType::TargetBound
+    ) || skill_heals(game_data, skill_data)
+    {
+        return false;
+    }
+
+    let mut status_effect_types = skill_status_effect_types(game_data, skill_data).peekable();
+    status_effect_types.peek().is_some() && status_effect_types.all(is_buff_status_effect)
+}
+
+fn lacks_skill_effects(
+    game_data: &GameData,
+    skill_data: &SkillData,
+    status_effects: &StatusEffects,
+) -> bool {
+    !skill_status_effect_types(game_data, skill_data).any(|status_effect_type| {
+        status_effects
+            .get_status_effect_value(status_effect_type)
+            .is_some()
+    })
+}
+
+/// The use requirements command_system enforces; a cast it refuses stops the bot.
+fn buddy_can_use_skill(
+    now: Instant,
+    game_data: &GameData,
+    bot: &BuddyBotQueryItem,
+    skill_data: &SkillData,
+) -> bool {
+    skill_use_requirements_met(
+        now,
+        game_data,
+        bot.client_entity,
+        bot.ability_values,
+        bot.health_points,
+        bot.move_mode,
+        bot.cooldowns,
+        bot.equipment,
+        bot.experience_points,
+        bot.inventory,
+        Some(bot.mana_points),
+        bot.stamina,
+        skill_data,
+    )
+}
+
+/// The target filter command_system checks for a cast on the player.
+fn buddy_can_target_player(
+    bot: &BuddyBotQueryItem,
+    player: &BuddyPlayerQueryItem,
+    skill_data: &SkillData,
+) -> bool {
+    skill_target_filter_allows(
+        bot.entity,
+        bot.team,
+        bot.clan_membership,
+        bot.party_membership,
+        player.entity,
+        player.team,
+        player.clan_membership,
+        player.party_membership,
+        player.health_points.hp,
+        player.client_entity,
+        skill_data,
+    )
+}
+
+/// The check command_system makes for a cast with no target (applied to the caster).
+fn buddy_can_target_self(bot: &BuddyBotQueryItem, skill_data: &SkillData) -> bool {
+    skill_data.skill_type.is_self_skill()
+        || skill_target_filter_allows(
+            bot.entity,
+            bot.team,
+            bot.clan_membership,
+            bot.party_membership,
+            bot.entity,
+            bot.team,
+            bot.clan_membership,
+            bot.party_membership,
+            bot.health_points.hp,
+            bot.client_entity,
+            skill_data,
+        )
+}
+
+/// Heals the player (or the bot itself) when they are low, the lower one first.
+fn buddy_choose_heal(
+    now: Instant,
+    game_data: &GameData,
+    bot: &BuddyBotQueryItem,
+    player: &BuddyPlayerQueryItem,
+) -> Option<NextCommand> {
+    if buddy_is_casting(bot) {
+        return None;
+    }
+
+    let player_alive = player.dead.is_none() && player.health_points.hp > 0;
+    let player_ratio = if player_alive {
+        health_ratio(player.health_points, player.ability_values)
+    } else {
+        1.0
+    };
+    let self_ratio = health_ratio(bot.health_points, bot.ability_values);
+    let heal_player = player_ratio < BUDDY_HEAL_PLAYER_HEALTH_RATIO;
+    let heal_self = self_ratio < BUDDY_HEAL_SELF_HEALTH_RATIO;
+    if !heal_player && !heal_self {
+        return None;
+    }
+
+    let player_distance = bot
+        .position
+        .position
+        .xy()
+        .distance(player.position.position.xy());
+    let mut player_cast = None;
+    let mut self_cast = None;
+
+    for skill_data in buddy_skills(game_data, bot.skill_list) {
+        if !skill_heals(game_data, skill_data)
+            || !buddy_can_use_skill(now, game_data, bot, skill_data)
+        {
             continue;
         }
 
-        // Calculate distance in XY plane only (2D distance for ground movement)
-        let bot_pos = bot_position.position;
-        let player_pos_2d = Vec2::new(player_pos.x, player_pos.y);
-        let bot_pos_2d = Vec2::new(bot_pos.x, bot_pos.y);
-        let distance_2d = bot_pos_2d.distance(player_pos_2d);
+        if heal_player
+            && player_cast.is_none()
+            && heal_takes_effect(game_data, skill_data, player.status_effects)
+            && buddy_can_target_player(bot, player, skill_data)
+        {
+            if skill_data.skill_type.is_target_skill() {
+                player_cast = Some(NextCommand::with_cast_skill_target_entity(
+                    skill_data.id,
+                    player.entity,
+                    None,
+                ));
+            } else if skill_data.scope > 0
+                && player_distance <= skill_data.scope as f32
+                && buddy_can_target_self(bot, skill_data)
+            {
+                // An area heal centred on the bot reaches the player.
+                player_cast = Some(NextCommand::with_cast_skill_target_self(
+                    skill_data.id,
+                    None,
+                ));
+            }
+        }
 
-        // Convert follow_distance from meters (client coordinates) to centimeters (server coordinates)
-        // LLM uses client coordinates (meters), but server uses world coordinates (centimeters)
-        let follow_distance_cm = buddy_bot.follow_distance * 100.0;
-
-        // If too far, move toward player
-        if distance_2d > follow_distance_cm {
-            // Calculate direction toward player (2D in XY plane only)
-            let direction_2d = (player_pos_2d - bot_pos_2d).normalize();
-            
-            // Calculate target position, preserving the bot's Z coordinate
-            // This prevents the bot from "running away" due to Z coordinate differences
-            let target_offset = distance_2d - buddy_bot.follow_distance * 0.8;
-            let target_pos = Vec3::new(
-                bot_pos.x + direction_2d.x * target_offset,
-                bot_pos.y + direction_2d.y * target_offset,
-                bot_pos.z, // Keep bot's Z coordinate unchanged
-            );
-
-            // log::info!(
-            //     "[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} following player '{}': bot_pos={:?}, player_pos={:?}, distance_2d={}m, follow_distance={}m, target_pos={:?}",
-            //     bot_id,
-            //     buddy_bot.assigned_player_name,
-            //     bot_pos,
-            //     player_pos,
-            //     distance_2d / 100.0,  // Convert to meters for logging
-            //     buddy_bot.follow_distance,
-            //     target_pos
-            // );
-
-            next_command.command = Some(CommandData::Move {
-                destination: target_pos,
-                target: None,
-                move_mode: Some(MoveMode::Run),
-            });
-            next_command.has_sent_server_message = false;
-        } else {
-            // log::debug!(
-            //     "[LLM_DEBUG] FOLLOW_DIAGNOSTIC: Bot {} within follow distance of player '{}' (distance_2d={}m, follow_distance={}m)",
-            //     bot_id,
-            //     buddy_bot.assigned_player_name,
-            //     distance_2d / 100.0,
-            //     buddy_bot.follow_distance
-            // );
+        if heal_self
+            && self_cast.is_none()
+            && heal_takes_effect(game_data, skill_data, bot.status_effects)
+            && buddy_can_target_self(bot, skill_data)
+        {
+            self_cast = Some(NextCommand::with_cast_skill_target_self(
+                skill_data.id,
+                None,
+            ));
         }
     }
+
+    if heal_self && self_ratio < player_ratio {
+        self_cast.or(player_cast)
+    } else {
+        player_cast.or(self_cast)
+    }
+}
+
+/// Keeps the bot's buffs up on the player and itself while it has mana to spare.
+fn buddy_choose_buff(
+    now: Instant,
+    game_data: &GameData,
+    bot: &BuddyBotQueryItem,
+    player: &BuddyPlayerQueryItem,
+) -> Option<NextCommand> {
+    if buddy_is_casting(bot)
+        || !buddy_is_free(bot)
+        || mana_ratio(bot.mana_points, bot.ability_values) < BUDDY_BUFF_MIN_MANA_RATIO
+    {
+        return None;
+    }
+
+    let player_distance = bot
+        .position
+        .position
+        .xy()
+        .distance(player.position.position.xy());
+    let player_in_range = player.dead.is_none()
+        && player.health_points.hp > 0
+        && player_distance <= BUDDY_BUFF_RANGE_CM;
+
+    for skill_data in buddy_skills(game_data, bot.skill_list) {
+        if !skill_is_buff(game_data, skill_data)
+            || !buddy_can_use_skill(now, game_data, bot, skill_data)
+        {
+            continue;
+        }
+
+        let player_needs_buff = player_in_range
+            && lacks_skill_effects(game_data, skill_data, player.status_effects)
+            && buddy_can_target_player(bot, player, skill_data);
+        if player_needs_buff && skill_data.skill_type.is_target_skill() {
+            return Some(NextCommand::with_cast_skill_target_entity(
+                skill_data.id,
+                player.entity,
+                None,
+            ));
+        }
+
+        if buddy_can_target_self(bot, skill_data) {
+            let self_needs_buff = lacks_skill_effects(game_data, skill_data, bot.status_effects);
+            let reaches_player = player_needs_buff
+                && skill_data.scope > 0
+                && player_distance <= skill_data.scope as f32;
+            if self_needs_buff || reaches_player {
+                return Some(NextCommand::with_cast_skill_target_self(
+                    skill_data.id,
+                    None,
+                ));
+            }
+        }
+    }
+
+    None
+}
+
+/// Defensive / Aggressive: attack what the player is fighting, else the latest monster to
+/// hit the player or the bot; Aggressive bots also engage monsters near the player.
+fn buddy_choose_attack(
+    bot: &BuddyBotQueryItem,
+    player: &BuddyPlayerQueryItem,
+    target_query: &Query<(&ClientEntity, &Position, &HealthPoints, &Team), Without<Dead>>,
+    client_entity_list: &ClientEntityList,
+    now_seconds: f64,
+) -> Option<NextCommand> {
+    if !matches!(
+        bot.buddy.behavior_mode,
+        BotBehaviorMode::Defensive | BotBehaviorMode::Aggressive
+    ) || !buddy_is_free(bot)
+    {
+        return None;
+    }
+
+    let zone_id = player.position.zone_id;
+    let player_xy = player.position.position.xy();
+    let is_valid_target = |target_entity: Entity| {
+        target_query.get(target_entity).is_ok_and(
+            |(target_client_entity, target_position, target_health_points, target_team)| {
+                target_client_entity.is_monster()
+                    && target_health_points.hp > 0
+                    && target_team.id != bot.team.id
+                    && target_position.zone_id == zone_id
+                    && target_position.position.xy().distance(player_xy) <= BUDDY_ASSIST_RANGE_CM
+            },
+        )
+    };
+
+    if let Some(target) = player
+        .command
+        .target_entity()
+        .filter(|&target| is_valid_target(target))
+    {
+        return Some(NextCommand::with_attack(target));
+    }
+
+    let recent_attacker = player
+        .damage_sources
+        .into_iter()
+        .chain(bot.damage_sources)
+        .flat_map(|damage_sources| damage_sources.damage_sources.iter())
+        .filter(|damage_source| {
+            now_seconds - damage_source.last_damage_seconds <= BUDDY_RECENT_ATTACK_SECS
+                && is_valid_target(damage_source.entity)
+        })
+        .max_by(|a, b| a.last_damage_seconds.total_cmp(&b.last_damage_seconds))
+        .map(|damage_source| damage_source.entity);
+    if let Some(target) = recent_attacker {
+        return Some(NextCommand::with_attack(target));
+    }
+
+    if matches!(bot.buddy.behavior_mode, BotBehaviorMode::Aggressive) {
+        let bot_xy = bot.position.position.xy();
+        let nearest_monster = client_entity_list.get_zone(zone_id).and_then(|zone| {
+            zone.iter_entity_type_within_distance(
+                player_xy,
+                BUDDY_AGGRESSIVE_RANGE_CM,
+                &[ClientEntityType::Monster],
+            )
+            .filter(|(entity, _)| is_valid_target(*entity))
+            .min_by(|(_, a), (_, b)| {
+                a.xy()
+                    .distance_squared(bot_xy)
+                    .total_cmp(&b.xy().distance_squared(bot_xy))
+            })
+            .map(|(entity, _)| entity)
+        });
+        if let Some(target) = nearest_monster {
+            return Some(NextCommand::with_attack(target));
+        }
+    }
+
+    None
 }
 
 /// System that captures nearby chat messages for buddy bots
@@ -1589,33 +2082,77 @@ pub fn unregister_llm_bot(bot_manager: &mut ResMut<LlmBotManagerResource>, bot_i
 
 /// System that auto-accepts party invites for LLM buddy bots
 ///
-/// When a party invite is sent to an LLM buddy bot, this system automatically
-/// accepts it so the bot can party with its assigned player.
+/// A buddy bot accepts an invite from its assigned player, or from the leader of the party
+/// that player is in, and turns down everyone else, so it always ends up in its player's
+/// party. The invites themselves are sent by `llm_bot_teleport_to_player_on_login_system`
+/// (and bot creation) whenever the player logs in or changes zone.
 pub fn llm_buddy_bot_auto_accept_party_system(
-    bot_query: Query<(Entity, &crate::game::components::PartyMembership), With<LlmBuddyBot>>,
+    mut bot_query: Query<(Entity, &LlmBuddyBot, &mut PartyMembership)>,
+    character_query: Query<
+        (
+            Entity,
+            &CharacterInfo,
+            Option<&PartyMembership>,
+            Has<ClientEntity>,
+        ),
+        Without<LlmBuddyBot>,
+    >,
+    party_query: Query<&Party>,
     mut party_events: MessageWriter<crate::game::events::PartyEvent>,
 ) {
-    for (bot_entity, party_membership) in bot_query.iter() {
-        // Skip if already in a party
-        if party_membership.party.is_some() {
+    for (bot_entity, buddy_bot, mut party_membership) in bot_query.iter_mut() {
+        if party_membership.party.is_some() || party_membership.pending_invites.is_empty() {
             continue;
         }
 
-        // If there are pending invites, accept the first one
-        if let Some(&owner_entity) = party_membership.pending_invites.first() {
-            log::info!(
-                "LLM buddy bot auto-accepting party invite from entity {:?}",
-                owner_entity
-            );
-            party_events.write(crate::game::events::PartyEvent::AcceptInvite {
-                owner_entity,
-                invited_entity: bot_entity,
-            });
-            
-            // NOTE: We do NOT clear pending_invites here because the party_system
-            // processes events in the next frame and needs to verify the invite exists.
-            // The handle_party_accept_invite function will remove the specific invite
-            // from the list after successfully processing the accept.
+        let assigned_player = character_query.iter().find(|(_, character_info, _, _)| {
+            character_info.name == buddy_bot.assigned_player_name
+        });
+        let assigned_player_entity = assigned_player.map(|(entity, _, _, _)| entity);
+        let assigned_party_leader = assigned_player
+            .and_then(|(_, _, membership, _)| membership.and_then(|membership| membership.party))
+            .and_then(|party_entity| party_query.get(party_entity).ok())
+            .map(|party| party.owner);
+
+        let mut accepted = false;
+        let mut stale_invites = Vec::new();
+        for &owner_entity in party_membership.pending_invites.iter() {
+            let Ok((_, _, _, owner_in_zone)) = character_query.get(owner_entity) else {
+                // The inviter is gone; party_system cannot resolve (or reject) this invite.
+                stale_invites.push(owner_entity);
+                continue;
+            };
+
+            if !owner_in_zone {
+                // party_system only resolves an answer while the inviter is in a zone.
+                continue;
+            }
+
+            let allowed = Some(owner_entity) == assigned_player_entity
+                || Some(owner_entity) == assigned_party_leader;
+            if !allowed {
+                party_events.write(crate::game::events::PartyEvent::RejectInvite {
+                    reason: PartyRejectInviteReason::Busy,
+                    owner_entity,
+                    invited_entity: bot_entity,
+                });
+            } else if !accepted {
+                log::info!(
+                    "LLM buddy bot auto-accepting party invite from entity {:?}",
+                    owner_entity
+                );
+                party_events.write(crate::game::events::PartyEvent::AcceptInvite {
+                    owner_entity,
+                    invited_entity: bot_entity,
+                });
+                accepted = true;
+            }
+        }
+
+        if !stale_invites.is_empty() {
+            party_membership
+                .pending_invites
+                .retain(|owner_entity| !stale_invites.contains(owner_entity));
         }
     }
 }

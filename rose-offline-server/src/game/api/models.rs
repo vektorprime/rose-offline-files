@@ -153,13 +153,15 @@ fn default_move_mode() -> String {
 pub struct FollowRequest {
     /// Player name to follow
     pub player_name: String,
-    /// Distance to maintain from the player
+    /// Distance to maintain from the player, in server units (cm). The game clamps it
+    /// to 200..1500.
     #[serde(default = "default_follow_distance")]
     pub distance: f32,
 }
 
 fn default_follow_distance() -> f32 {
-    50.0  // Reduced from 300.0 to 50.0 for closer following
+    // Same as the LlmBuddyBot component default (3 m)
+    300.0
 }
 
 /// Request to attack a target

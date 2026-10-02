@@ -8,30 +8,61 @@ use rand::{seq::SliceRandom, Rng};
 use rose_game_common::components::Level;
 
 use crate::game::{
-    components::{Command, NextCommand, Position},
+    components::{ClientEntityType, Command, MoveMode, NextCommand, PartyMembership, Position},
+    resources::ClientEntityList,
     GameData,
 };
 
-use super::{BotQueryFilterAlive, IDLE_DURATION};
+use super::{
+    bot_personality::{BotArchetype, BotPersonality},
+    BotQueryFilterAlive, IDLE_DURATION,
+};
+
+/// Characters counted around a spawn to judge how crowded it is.
+const CROWD_RADIUS_MIN: f32 = 1000.0;
 
 #[derive(Debug, Default, Clone, Component, ActionBuilder)]
 pub struct FindMonsterSpawns;
 
+#[allow(clippy::type_complexity)]
 pub fn action_find_monster_spawn(
     mut commands: Commands,
     mut query: Query<(&Actor, &mut ActionState), With<FindMonsterSpawns>>,
-    query_entity: Query<(&Command, &Level, &Position), BotQueryFilterAlive>,
+    query_entity: Query<
+        (
+            &Command,
+            &Level,
+            &Position,
+            &PartyMembership,
+            Option<&BotPersonality>,
+        ),
+        BotQueryFilterAlive,
+    >,
+    query_party_membership: Query<&PartyMembership>,
+    client_entity_list: Res<ClientEntityList>,
     game_data: Res<GameData>,
 ) {
     let mut rng = rand::thread_rng();
 
     for (&Actor(entity), mut state) in query.iter_mut() {
-        let Ok((command, level, position)) = query_entity.get(entity) else {
+        let Ok((command, level, position, party_membership, personality)) =
+            query_entity.get(entity)
+        else {
             continue;
         };
 
         match *state {
             ActionState::Requested => {
+                // Stand a moment before heading off, like a player looking
+                // around for the next spot (fights nearby still interrupt).
+                if let Some(personality) = personality {
+                    if command.is_stop()
+                        && !command.is_stop_for(personality.reaction + personality.hunt_pause)
+                    {
+                        continue;
+                    }
+                }
+
                 let Some(zone_data) = game_data.zones.get_zone(position.zone_id) else {
                     *state = ActionState::Failure;
                     continue;
@@ -43,18 +74,20 @@ pub fn action_find_monster_spawn(
                     let mut total_level = 0;
                     let mut num_monsters = 0;
 
-                    for npc_id in spawn.basic_spawns.iter().map(|(npc_id, _)| *npc_id) {
+                    for npc_id in spawn
+                        .basic_spawns
+                        .iter()
+                        .chain(spawn.tactic_spawns.iter())
+                        .map(|(npc_id, _)| *npc_id)
+                    {
                         if let Some(npc_data) = game_data.npcs.get_npc(npc_id) {
                             total_level += npc_data.level;
                             num_monsters += 1;
                         }
                     }
 
-                    for npc_id in spawn.tactic_spawns.iter().map(|(npc_id, _)| *npc_id) {
-                        if let Some(npc_data) = game_data.npcs.get_npc(npc_id) {
-                            total_level += npc_data.level;
-                            num_monsters += 1;
-                        }
+                    if num_monsters == 0 {
+                        continue;
                     }
 
                     let average_level = total_level / num_monsters;
@@ -69,21 +102,64 @@ pub fn action_find_monster_spawn(
                     continue;
                 }
 
+                let explorer = personality
+                    .is_some_and(|personality| personality.archetype == BotArchetype::Explorer);
+
                 // Take the 10 spawns with smallest level delta to our character
                 potential_spawns.sort_by(|lhs, rhs| lhs.1.cmp(&rhs.1));
                 potential_spawns.truncate(10);
 
-                // Then take the 5 closest
-                potential_spawns.sort_by(|lhs, rhs| lhs.0.partial_cmp(&rhs.0).unwrap());
-                potential_spawns.truncate(5);
+                // Then the closest ones (explorers roam further)
+                potential_spawns.sort_by(|lhs, rhs| lhs.0.total_cmp(&rhs.0));
+                potential_spawns.truncate(if explorer { 8 } else { 5 });
+
+                // Prefer spots other hunters are not already camping.
+                let zone_entities = client_entity_list.get_zone(position.zone_id);
+                let weighted: Vec<(usize, f32)> = potential_spawns
+                    .iter()
+                    .map(|&(_, _, index)| {
+                        let spawn = &zone_data.monster_spawns[index];
+                        let radius = ((spawn.range * 100) as f32).max(CROWD_RADIUS_MIN);
+                        let crowd = zone_entities.map_or(0, |zone_entities| {
+                            zone_entities
+                                .iter_entity_type_within_distance(
+                                    spawn.position.xy(),
+                                    radius,
+                                    &[ClientEntityType::Character],
+                                )
+                                .filter(|(other, _)| {
+                                    *other != entity
+                                        && !(party_membership.party.is_some()
+                                            && query_party_membership.get(*other).is_ok_and(
+                                                |membership| {
+                                                    membership.party == party_membership.party
+                                                },
+                                            ))
+                                })
+                                .count()
+                        });
+                        (index, 1.0 / (1.0 + crowd as f32).powi(2))
+                    })
+                    .collect();
 
                 // Choose one randomly
-                let Some(spawn_point) = potential_spawns
-                    .choose(&mut rng)
-                    .and_then(|(_, _, index)| zone_data.monster_spawns.get(*index))
+                let Some(spawn_point) = weighted
+                    .choose_weighted(&mut rng, |(_, weight)| *weight)
+                    .ok()
+                    .and_then(|(index, _)| zone_data.monster_spawns.get(*index))
                 else {
                     *state = ActionState::Failure;
                     continue;
+                };
+
+                // Players run between hunting spots; some relaxed ones walk.
+                let move_mode = if personality
+                    .is_some_and(|personality| personality.archetype == BotArchetype::Casual)
+                    && rng.gen_bool(0.3)
+                {
+                    MoveMode::Walk
+                } else {
+                    MoveMode::Run
                 };
 
                 // Move near the center of spawn
@@ -96,7 +172,7 @@ pub fn action_find_monster_spawn(
                             0.0,
                         ),
                     None,
-                    None,
+                    Some(move_mode),
                 ));
                 *state = ActionState::Executing;
             }

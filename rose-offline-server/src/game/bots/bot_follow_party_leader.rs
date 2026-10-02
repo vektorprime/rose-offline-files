@@ -1,6 +1,6 @@
 use bevy::{
     ecs::query::QueryData,
-    math::Vec3Swizzles,
+    math::{Vec2, Vec3Swizzles},
     prelude::{Commands, Component, Entity, Query, With},
 };
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
@@ -11,6 +11,28 @@ use crate::game::{
 };
 
 use super::Dead;
+
+/// Followers spread around the leader at these angles (relative to the
+/// side they approach from) so a party walks as a loose group instead of
+/// stacking on one point.
+const FORMATION_ANGLES_DEG: [f32; 4] = [-40.0, 40.0, -95.0, 95.0];
+/// Distance followers keep from the leader.
+const FORMATION_DISTANCE: f32 = 200.0;
+/// Followers within this much of their place do not re-position.
+const FORMATION_SLACK: f32 = 100.0;
+/// Beyond this distance followers run to catch up whatever the leader does.
+const CATCH_UP_DISTANCE: f32 = 1000.0;
+
+/// This follower's place in the party (leader excluded).
+fn formation_slot(party: &Party, entity: Entity) -> usize {
+    party
+        .members
+        .iter()
+        .filter_map(|member| member.get_entity())
+        .filter(|member| *member != party.owner)
+        .position(|member| member == entity)
+        .unwrap_or(0)
+}
 
 #[derive(Clone, Component, Debug, ScorerBuilder)]
 pub struct ShouldFollowPartyLeader {
@@ -82,6 +104,7 @@ pub fn action_follow_party_leader(
     query_bot: Query<BotQuery, BotQueryFilterAlive>,
     query_party: Query<&Party>,
     query_owner: Query<(&Position, Option<&Dead>)>,
+    query_owner_move_mode: Query<&MoveMode>,
 ) {
     for (&Actor(entity), mut state) in query.iter_mut() {
         let Ok(bot) = query_bot.get(entity) else {
@@ -120,25 +143,43 @@ pub fn action_follow_party_leader(
                     .xy()
                     .distance(owner_position.position.xy());
 
-                if distance > 200.0 {
-                    // Move to a point close to the leader.
-                    let direction = (owner_position.position.xy()
-                        - bot.position.position.xy())
-                        .normalize();
-                    let target_offset = (distance - 200.0).max(0.0);
-                    let destination = bot.position.position
-                        + bevy::math::Vec3::new(
-                            direction.x * target_offset,
-                            direction.y * target_offset,
-                            0.0,
-                        );
-
-                    commands.entity(entity).insert(NextCommand::with_move(
-                        destination,
-                        None,
-                        Some(MoveMode::Run),
-                    ));
+                if distance <= FORMATION_DISTANCE + FORMATION_SLACK {
+                    // Caught up: get on with other things until the leader
+                    // moves off again.
+                    *state = ActionState::Success;
+                    continue;
                 }
+
+                // Move to this follower's place beside the leader.
+                let slot = bot
+                    .party_membership
+                    .party
+                    .and_then(|party| query_party.get(party).ok())
+                    .map_or(0, |party| formation_slot(party, entity));
+                let angle = FORMATION_ANGLES_DEG[slot % FORMATION_ANGLES_DEG.len()].to_radians();
+                let from_leader = (bot.position.position.xy() - owner_position.position.xy())
+                    .try_normalize()
+                    .unwrap_or(Vec2::X);
+                let offset = Vec2::from_angle(angle).rotate(from_leader) * FORMATION_DISTANCE;
+                let destination =
+                    owner_position.position + bevy::math::Vec3::new(offset.x, offset.y, 0.0);
+
+                // Keep the leader's pace: walk with a walking leader in town,
+                // run to catch up when far behind.
+                let move_mode = if distance > CATCH_UP_DISTANCE {
+                    MoveMode::Run
+                } else {
+                    query_owner_move_mode
+                        .get(owner_entity)
+                        .copied()
+                        .unwrap_or(MoveMode::Run)
+                };
+
+                commands.entity(entity).insert(NextCommand::with_move(
+                    destination,
+                    None,
+                    Some(move_mode),
+                ));
             }
             ActionState::Cancelled => {
                 *state = ActionState::Failure;

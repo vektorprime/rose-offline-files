@@ -4,13 +4,24 @@
 //! Buddy Bot REST API. It stores the bot's unique ID, assigned player, and
 //! recent chat messages.
 
-use bevy::ecs::prelude::Component;
+use std::time::Instant;
+
+use bevy::{ecs::prelude::Component, math::Vec3};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Maximum number of chat messages to store
 pub const MAX_CHAT_MESSAGES: usize = 50;
+
+/// Default distance (server units, cm) a buddy bot keeps from its assigned player.
+pub const DEFAULT_FOLLOW_DISTANCE_CM: f32 = 300.0;
+
+/// Range the follow distance is clamped to. The follow system used to read the stored
+/// value as metres (x100), so a bot file's 300 meant 300 m and the bot never moved;
+/// bot files and API callers still send values meant in either unit.
+pub const FOLLOW_DISTANCE_MIN_CM: f32 = 200.0;
+pub const FOLLOW_DISTANCE_MAX_CM: f32 = 1500.0;
 
 /// A chat message received by the bot
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,7 +68,7 @@ pub enum BotBehaviorMode {
     Defensive,
     /// Attacks any monster in range
     Aggressive,
-    /// Prioritizes healing and buffing over attacking
+    /// Only heals and buffs, never attacks
     Support,
 }
 
@@ -80,14 +91,20 @@ pub struct LlmBuddyBot {
     pub assigned_player_id: u32,
     /// Name of the assigned player (for quick lookup)
     pub assigned_player_name: String,
-    /// Distance to maintain from the assigned player
+    /// Distance to maintain from the assigned player, in server units (cm).
+    /// Read it through `follow_distance_cm`, which clamps it to a sensible range.
     pub follow_distance: f32,
     /// Recent chat messages (capped at MAX_CHAT_MESSAGES)
     pub chat_messages: Vec<ChatMessage>,
-    /// Whether the bot is currently in follow mode
+    /// Whether the bot is currently in follow mode. While false (manual API control)
+    /// the built-in follow / support behaviour leaves the bot alone.
     pub is_following: bool,
     /// Current behavior mode
     pub behavior_mode: BotBehaviorMode,
+    /// Destination of the follow move the bot is currently running, if any
+    pub follow_goal: Option<Vec3>,
+    /// When the built-in behaviour next re-evaluates heals, buffs and combat
+    pub next_think_at: Option<Instant>,
 }
 
 impl LlmBuddyBot {
@@ -97,10 +114,22 @@ impl LlmBuddyBot {
             id,
             assigned_player_id,
             assigned_player_name,
-            follow_distance: 50.0,
+            follow_distance: DEFAULT_FOLLOW_DISTANCE_CM,
             chat_messages: Vec::with_capacity(MAX_CHAT_MESSAGES),
             is_following: true,
             behavior_mode: BotBehaviorMode::Defensive,
+            follow_goal: None,
+            next_think_at: None,
+        }
+    }
+
+    /// The follow distance in server units (cm), clamped to a sensible range
+    pub fn follow_distance_cm(&self) -> f32 {
+        if self.follow_distance.is_finite() {
+            self.follow_distance
+                .clamp(FOLLOW_DISTANCE_MIN_CM, FOLLOW_DISTANCE_MAX_CM)
+        } else {
+            DEFAULT_FOLLOW_DISTANCE_CM
         }
     }
 
@@ -171,9 +200,23 @@ mod tests {
         assert_eq!(bot.id, id);
         assert_eq!(bot.assigned_player_id, 12345);
         assert_eq!(bot.assigned_player_name, "TestPlayer");
-        assert_eq!(bot.follow_distance, 50.0);
+        assert_eq!(bot.follow_distance, DEFAULT_FOLLOW_DISTANCE_CM);
         assert!(bot.chat_messages.is_empty());
         assert!(bot.is_following);
+    }
+
+    #[test]
+    fn test_follow_distance_clamped() {
+        let mut bot = LlmBuddyBot::new_random(0, String::new());
+
+        bot.set_follow_distance(50.0);
+        assert_eq!(bot.follow_distance_cm(), FOLLOW_DISTANCE_MIN_CM);
+
+        bot.set_follow_distance(30000.0);
+        assert_eq!(bot.follow_distance_cm(), FOLLOW_DISTANCE_MAX_CM);
+
+        bot.set_follow_distance(400.0);
+        assert_eq!(bot.follow_distance_cm(), 400.0);
     }
 
     #[test]

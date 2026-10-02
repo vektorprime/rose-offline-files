@@ -582,7 +582,8 @@ pub fn process_llm_bot_creations_system(
                 assigned_player_id,
                 zone_id,
                 position: spawn_position,
-                follow_distance: 50.0,  // Reduced from 300.0 to 50.0 for closer following
+                // Server units (cm), same as the LlmBuddyBot component default
+                follow_distance: 300.0,
             };
 
             // Create the bot entity

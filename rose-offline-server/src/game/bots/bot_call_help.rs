@@ -10,7 +10,7 @@ use bevy::{
         Without,
     },
 };
-use rand::seq::SliceRandom;
+use rand::{seq::SliceRandom, Rng};
 
 use crate::game::{
     components::{
@@ -21,7 +21,10 @@ use crate::game::{
     resources::ServerMessages,
 };
 
-use super::{BotBuild, BotCombatTarget, VendorBot};
+use super::{
+    bot_personality::{BotActivity, BotLife, BotPersonality},
+    BotBuild, BotCombatTarget, VendorBot,
+};
 
 /// How long an assist request stays active.
 const ASSIST_DURATION: Duration = Duration::from_secs(8);
@@ -70,6 +73,7 @@ pub fn bot_call_for_help_system(
         ),
         (With<BotBuild>, Without<LlmBuddyBot>, Without<VendorBot>, Without<Dead>),
     >,
+    query_helper: Query<(Option<&BotPersonality>, Option<&BotLife>)>,
     mut assist_requests: ResMut<BotAssistRequests>,
     mut server_messages: ResMut<ServerMessages>,
     mut chat_message_events: MessageWriter<ChatMessageEvent>,
@@ -129,6 +133,10 @@ pub fn bot_call_for_help_system(
         }
 
         let line = HELP_LINES.choose(&mut rng).unwrap_or(&"").to_string();
+        let line = match query_helper.get(defender) {
+            Ok((Some(personality), _)) => personality.stylize(&mut rng, &line),
+            _ => line,
+        };
         server_messages.send_entity_message(
             client_entity,
             ServerMessage::ShoutChat {
@@ -180,6 +188,18 @@ pub fn bot_call_for_help_system(
                 continue;
             }
             if position.position.xy().distance(defender_pos) > ASSIST_RANGE {
+                continue;
+            }
+
+            // Not everyone drops what they are doing: helpful characters
+            // usually come, AFK ones never do.
+            let (personality, life) = query_helper.get(bot_entity).unwrap_or((None, None));
+            if life.is_some_and(|life| life.activity == BotActivity::Afk) {
+                continue;
+            }
+            let help_chance =
+                personality.map_or(0.7, |personality| 0.3 + 0.6 * personality.sociability);
+            if !rng.gen_bool(help_chance as f64) {
                 continue;
             }
 

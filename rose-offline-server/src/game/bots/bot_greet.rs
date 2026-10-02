@@ -1,5 +1,11 @@
 //! Greeting behaviour: bots wave and say hello when a player walks up to
 //! them, and say goodbye when the player walks away again.
+//!
+//! Not every bot greets every passer-by (a player walking through a crowded
+//! plaza used to be greeted by every bot at once): friendly personalities
+//! greet more often, AFK bots never, and only a couple of bots greet the
+//! same player within a short window. A bot that decides not to greet still
+//! remembers the player so it does not re-roll every tick.
 
 use std::{
     collections::HashMap,
@@ -9,22 +15,29 @@ use std::{
 use bevy::{
     ecs::change_detection::DetectChangesMut,
     math::{Vec2, Vec3Swizzles},
-    prelude::{Commands, Component, Entity, MessageWriter, Query, Res, ResMut, With, Without},
+    prelude::{
+        Commands, Component, Entity, MessageWriter, Query, Res, ResMut, Resource, With, Without,
+    },
 };
 use rand::{seq::SliceRandom, Rng};
-use rose_data::{MotionId, ZoneId};
+use rose_data::ZoneId;
 
 use crate::game::{
     components::{
         CharacterInfo, ChatType, ClientEntity, ClientEntityType, Command, Dead, LlmBuddyBot,
-        NextCommand, Position,
+        Position,
     },
     events::ChatMessageEvent,
     messages::server::ServerMessage,
     resources::{GameData, ServerMessages},
 };
 
-use super::{is_idle_for_duration, is_town_zone, BotBuild, VendorBot, IDLE_DURATION};
+use super::{
+    bot_chat::{fill_template, first_name},
+    bot_emotes::{bot_play_emote_kind, BotEmoteKind, BotEmotes},
+    bot_personality::{BotActivity, BotLife, BotPersonality},
+    is_idle_for_duration, is_town_zone, BotBuild, VendorBot, IDLE_DURATION,
+};
 
 /// Distance a player must come within for a bot to greet them.
 const GREET_RANGE: f32 = 350.0;
@@ -34,14 +47,18 @@ const FAREWELL_RANGE: f32 = 500.0;
 const GREET_COOLDOWN: Duration = Duration::from_secs(90);
 /// Minimum time between greeting and farewell for the same player.
 const MIN_GREET_AGE: Duration = Duration::from_secs(3);
-/// Wave motion id.
-const WAVE_MOTION_ID: u16 = 15;
+/// At most this many bots greet one player within `GREET_CROWD_WINDOW`.
+const MAX_GREETERS_PER_PLAYER: u8 = 2;
+const GREET_CROWD_WINDOW: Duration = Duration::from_secs(20);
 
 const GREETING_LINES: &[&str] = &[
     "Hello there!",
     "Hi! Good to see you.",
     "Hey there, welcome!",
     "Hello! Enjoying your day?",
+    "Hi {name}!",
+    "Hey {name}!",
+    "Oh, hi {name}.",
 ];
 
 const FAREWELL_LINES: &[&str] = &[
@@ -49,12 +66,34 @@ const FAREWELL_LINES: &[&str] = &[
     "Take care!",
     "Goodbye, come back soon!",
     "See you later!",
+    "Bye {name}!",
 ];
 
-/// Tracks which players a bot has recently greeted.
+/// Tracks which players a bot has recently met, and whether it greeted
+/// them out loud.
 #[derive(Component, Default)]
 pub struct BotGreetState {
-    greeted: Vec<(Entity, Instant)>,
+    greeted: Vec<(Entity, Instant, bool)>,
+}
+
+/// How many bots greeted each player recently.
+#[derive(Resource, Default)]
+pub struct BotGreetLimiter {
+    recent: HashMap<Entity, (Instant, u8)>,
+}
+
+impl BotGreetLimiter {
+    fn try_take(&mut self, player: Entity, now: Instant) -> bool {
+        let entry = self.recent.entry(player).or_insert((now, 0));
+        if now.saturating_duration_since(entry.0) >= GREET_CROWD_WINDOW {
+            *entry = (now, 0);
+        }
+        if entry.1 >= MAX_GREETERS_PER_PLAYER {
+            return false;
+        }
+        entry.1 += 1;
+        true
+    }
 }
 
 /// Sends a local chat line from a bot.
@@ -84,6 +123,21 @@ fn say(
     });
 }
 
+fn compose_line(
+    rng: &mut impl Rng,
+    lines: &[&str],
+    player_name: &str,
+    personality: Option<&BotPersonality>,
+) -> String {
+    let template = lines.choose(rng).copied().unwrap_or("");
+    let line = fill_template(template, &[("name", first_name(player_name))]);
+    match personality {
+        Some(personality) => personality.stylize(rng, &line),
+        None => line,
+    }
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn bot_greet_system(
     mut commands: Commands,
     mut query_bots: Query<
@@ -93,25 +147,49 @@ pub fn bot_greet_system(
             &CharacterInfo,
             &Position,
             &Command,
+            Option<&BotPersonality>,
+            Option<&BotLife>,
             Option<&mut BotGreetState>,
         ),
-        (With<BotBuild>, Without<LlmBuddyBot>, Without<VendorBot>, Without<Dead>),
+        (
+            With<BotBuild>,
+            Without<LlmBuddyBot>,
+            Without<VendorBot>,
+            Without<Dead>,
+        ),
     >,
-    query_players: Query<(Entity, &ClientEntity, &Position), (Without<BotBuild>, Without<Dead>)>,
+    query_players: Query<
+        (Entity, &ClientEntity, &Position, &CharacterInfo),
+        (Without<BotBuild>, Without<Dead>),
+    >,
     game_data: Res<GameData>,
+    emotes: Res<BotEmotes>,
+    mut limiter: ResMut<BotGreetLimiter>,
     mut server_messages: ResMut<ServerMessages>,
     mut chat_message_events: MessageWriter<ChatMessageEvent>,
 ) {
     let mut rng = rand::thread_rng();
     let now = Instant::now();
 
-    // Characters per zone, built once per run in query order, so each bot
-    // visits the same players in the same order (and draws the RNG the same
-    // way) as a filtered scan of all client entities would.
+    if limiter.recent.len() > 256 {
+        limiter
+            .recent
+            .retain(|_, (since, _)| now.saturating_duration_since(*since) < GREET_CROWD_WINDOW);
+    }
+
+    // Characters per zone, built once per run in query order.
     let mut players_by_zone: Option<HashMap<ZoneId, Vec<(Entity, Vec2)>>> = None;
 
-    for (bot_entity, client_entity, character_info, position, command, mut greet_state) in
-        query_bots.iter_mut()
+    for (
+        bot_entity,
+        client_entity,
+        character_info,
+        position,
+        command,
+        personality,
+        life,
+        mut greet_state,
+    ) in query_bots.iter_mut()
     {
         let Some(zone_data) = game_data.zones.get_zone(position.zone_id) else {
             continue;
@@ -122,7 +200,7 @@ pub fn bot_greet_system(
 
         let players_by_zone = players_by_zone.get_or_insert_with(|| {
             let mut by_zone: HashMap<ZoneId, Vec<(Entity, Vec2)>> = HashMap::new();
-            for (player_entity, player_client_entity, player_position) in query_players.iter() {
+            for (player_entity, player_client_entity, player_position, _) in query_players.iter() {
                 if player_client_entity.entity_type == ClientEntityType::Character {
                     by_zone
                         .entry(player_position.zone_id)
@@ -141,11 +219,16 @@ pub fn bot_greet_system(
             None => &mut fresh_greeted,
         };
         let greeted_len_before = greeted.len();
-        greeted.retain(|(_, greeted_at)| now.saturating_duration_since(*greeted_at) < GREET_COOLDOWN);
+        greeted.retain(|(_, greeted_at, _)| {
+            now.saturating_duration_since(*greeted_at) < GREET_COOLDOWN
+        });
         let mut changed = greeted.len() != greeted_len_before;
 
         let bot_pos = position.position.xy();
         let idle = is_idle_for_duration(command, IDLE_DURATION);
+        let afk = life.is_some_and(|life| life.activity == BotActivity::Afk);
+        let greet_chance =
+            personality.map_or(0.5, |personality| 0.15 + 0.55 * personality.sociability);
 
         let zone_players = players_by_zone
             .get(&position.zone_id)
@@ -154,31 +237,51 @@ pub fn bot_greet_system(
             let distance = bot_pos.distance(player_pos);
             let greeted_index = greeted
                 .iter()
-                .position(|(entity, _)| *entity == player_entity);
+                .position(|(entity, _, _)| *entity == player_entity);
 
             if distance <= GREET_RANGE {
                 if greeted_index.is_none() && idle {
-                    let line = GREETING_LINES.choose(&mut rng).unwrap_or(&"").to_string();
-                    say(
-                        &mut server_messages,
-                        &mut chat_message_events,
-                        client_entity,
-                        bot_entity,
-                        &character_info.name,
-                        position.zone_id,
-                        &line,
-                    );
-                    commands
-                        .entity(bot_entity)
-                        .insert(NextCommand::with_emote(MotionId::new(WAVE_MOTION_ID), true));
-                    greeted.push((player_entity, now));
+                    let greet_aloud = !afk
+                        && rng.gen_bool(greet_chance as f64)
+                        && limiter.try_take(player_entity, now);
+                    if greet_aloud {
+                        let player_name = query_players
+                            .get(player_entity)
+                            .map_or("", |(_, _, _, info)| info.name.as_str());
+                        let line = compose_line(&mut rng, GREETING_LINES, player_name, personality);
+                        say(
+                            &mut server_messages,
+                            &mut chat_message_events,
+                            client_entity,
+                            bot_entity,
+                            &character_info.name,
+                            position.zone_id,
+                            &line,
+                        );
+                        bot_play_emote_kind(
+                            &mut commands,
+                            &mut server_messages,
+                            &emotes,
+                            &mut rng,
+                            bot_entity,
+                            client_entity,
+                            BotEmoteKind::Greet,
+                        );
+                    }
+                    greeted.push((player_entity, now, greet_aloud));
                     changed = true;
                 }
             } else if distance > FAREWELL_RANGE {
                 if let Some(index) = greeted_index {
-                    let greeted_at = greeted[index].1;
-                    if now.saturating_duration_since(greeted_at) >= MIN_GREET_AGE && idle {
-                        let line = FAREWELL_LINES.choose(&mut rng).unwrap_or(&"").to_string();
+                    let (_, greeted_at, greeted_aloud) = greeted[index];
+                    if !greeted_aloud {
+                        greeted.remove(index);
+                        changed = true;
+                    } else if now.saturating_duration_since(greeted_at) >= MIN_GREET_AGE && idle {
+                        let player_name = query_players
+                            .get(player_entity)
+                            .map_or("", |(_, _, _, info)| info.name.as_str());
+                        let line = compose_line(&mut rng, FAREWELL_LINES, player_name, personality);
                         say(
                             &mut server_messages,
                             &mut chat_message_events,
@@ -209,5 +312,3 @@ pub fn bot_greet_system(
         }
     }
 }
-
-
