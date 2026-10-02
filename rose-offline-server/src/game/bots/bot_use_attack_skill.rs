@@ -7,7 +7,7 @@ use rand::Rng;
 use rose_data::{SkillTargetFilter, SkillType};
 
 use crate::game::{
-    bundles::GLOBAL_SKILL_COOLDOWN,
+    bundles::skill_use_requirements_met,
     components::{
         AbilityValues, ClientEntity, ClientEntityType, ClanMembership, Command,
         CommandData, Cooldowns, Dead, Equipment, ExperiencePoints, HealthPoints, Inventory,
@@ -16,7 +16,7 @@ use crate::game::{
     GameData,
 };
 
-use super::{BotCombatTarget, BotQueryFilterAlive};
+use super::{actors_with_skill_in_progress, BotCombatTarget, BotQueryFilterAlive};
 
 #[derive(Clone, Component, Debug, ScorerBuilder)]
 pub struct ShouldUseAttackSkill {
@@ -26,7 +26,9 @@ pub struct ShouldUseAttackSkill {
 #[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct UseAttackSkill;
 
-// Check if skill can target entity - takes all data directly without QueryData
+// Check if skill can target entity - takes all data directly without QueryData.
+// Same as command_system's filter (bundles::skill_target_filter_allows) except that
+// Allied is limited to our own team, so a chosen target always passes the server check.
 fn check_skill_target_filter(
     caster_entity: Entity,
     caster_team: &Team,
@@ -99,36 +101,6 @@ fn check_skill_target_filter(
     }
 }
 
-// Check if skill can be used - takes all data directly without QueryData
-fn check_skill_can_use(
-    now: std::time::Instant,
-    _game_data: &GameData,
-    client_entity: &ClientEntity,
-    cooldowns: Option<&Cooldowns>,
-    move_mode: &MoveMode,
-    skill_data: &rose_data::SkillData,
-) -> bool {
-    if !client_entity.is_character() {
-        return true;
-    }
-
-    // Check cooldown
-    if let Some(cooldowns) = cooldowns {
-        if let Some(global) = cooldowns.skill_global {
-            if now - global < GLOBAL_SKILL_COOLDOWN {
-                return false;
-            }
-        }
-    }
-
-    // Check move mode
-    if matches!(move_mode, MoveMode::Drive) {
-        return false;
-    }
-
-    true
-}
-
 pub fn score_should_use_attack_skill(
     mut query: Query<(&ShouldUseAttackSkill, &Actor, &mut Score)>,
     query_combat_target: Query<&BotCombatTarget, BotQueryFilterAlive>,
@@ -149,7 +121,9 @@ pub fn score_should_use_attack_skill(
         Option<&ClanMembership>,
         Option<&Stamina>,
     ), BotQueryFilterAlive>,
-    query_is_using_skill: Query<Option<&UseAttackSkill>, BotQueryFilterAlive>,
+    query_alive: Query<(), BotQueryFilterAlive>,
+    query_skill_actions: Query<(&Actor, &ActionState), With<UseAttackSkill>>,
+    query_command: Query<(&Command, &NextCommand)>,
     query_target: Query<(
         Entity,
         &ClientEntity,
@@ -164,15 +138,18 @@ pub fn score_should_use_attack_skill(
     let now = std::time::Instant::now();
     let _ = time.elapsed();
     let mut rng = rand::thread_rng();
+    let casting_actors = actors_with_skill_in_progress(&query_skill_actions, &query_command);
 
     for (scorer, &Actor(entity), mut score) in query.iter_mut() {
         score.set(0.0);
 
-        // Check if already using skill
-        let Ok(is_using_skill) = query_is_using_skill.get(entity) else {
+        if !query_alive.contains(entity) {
             continue;
-        };
-        if is_using_skill.is_some() {
+        }
+
+        // Keep the score while our cast is in progress so the thinker does
+        // not cancel it (and overwrite the queued cast) mid-way.
+        if casting_actors.contains(&entity) {
             score.set(scorer.score);
             continue;
         }
@@ -184,8 +161,8 @@ pub fn score_should_use_attack_skill(
 
         // Get caster data
         let Ok((caster_entity, caster_ability_values, caster_client_entity, caster_hp,
-                caster_move_mode, caster_team, caster_mana, caster_cooldowns, _caster_equipment,
-                _caster_xp, _caster_inventory, caster_party, caster_clan, _caster_stamina)) =
+                caster_move_mode, caster_team, caster_mana, caster_cooldowns, caster_equipment,
+                caster_xp, caster_inventory, caster_party, caster_clan, caster_stamina)) =
             query_caster.get(entity) else {
             continue;
         };
@@ -226,13 +203,20 @@ pub fn score_should_use_attack_skill(
                 continue;
             };
 
-            // Check basic skill usability
-            if !check_skill_can_use(
+            // Same use requirements command_system enforces: a cast it refuses stops the bot.
+            if !skill_use_requirements_met(
                 now,
                 &game_data,
                 caster_client_entity,
-                caster_cooldowns,
+                caster_ability_values,
+                caster_hp,
                 caster_move_mode,
+                caster_cooldowns,
+                caster_equipment,
+                caster_xp,
+                caster_inventory,
+                caster_mana,
+                caster_stamina,
                 skill_data,
             ) {
                 continue;
@@ -309,8 +293,8 @@ pub fn action_use_attack_skill(
                 // Get caster data
                 let Ok((caster_entity, caster_ability_values, caster_client_entity, caster_hp,
                         caster_move_mode, caster_team, caster_mana, caster_cooldowns,
-                        _caster_equipment, _caster_xp, _caster_inventory, caster_party,
-                        caster_clan, _caster_stamina)) =
+                        caster_equipment, caster_xp, caster_inventory, caster_party,
+                        caster_clan, caster_stamina)) =
                     query_caster.get(entity) else {
                     *state = ActionState::Failure;
                     continue;
@@ -342,13 +326,21 @@ pub fn action_use_attack_skill(
                         continue;
                     };
 
-                    // Check basic skill usability
-                    if !check_skill_can_use(
+                    // Same use requirements command_system enforces: a cast it refuses
+                    // stops the bot.
+                    if !skill_use_requirements_met(
                         now,
                         &game_data,
                         caster_client_entity,
-                        caster_cooldowns,
+                        caster_ability_values,
+                        caster_hp,
                         caster_move_mode,
+                        caster_cooldowns,
+                        caster_equipment,
+                        caster_xp,
+                        caster_inventory,
+                        caster_mana,
+                        caster_stamina,
                         skill_data,
                     ) {
                         continue;

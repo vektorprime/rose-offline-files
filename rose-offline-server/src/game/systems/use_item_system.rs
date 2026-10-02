@@ -558,12 +558,13 @@ pub fn use_item_system(
                                 use_item_user.client_entity,
                                 ServerMessage::UpdateStatusEffects {
                                     entity_id: use_item_user.client_entity.id,
-                                    status_effects: use_item_user.status_effects.active.clone(),
+                                    status_effects: Box::new(
+                                        use_item_user.status_effects.active.clone(),
+                                    ),
                                     updated_values: Vec::new(),
-                                    regen_effects: use_item_user
-                                        .status_effects_regen
-                                        .regens
-                                        .clone(),
+                                    regen_effects: Box::new(
+                                        use_item_user.status_effects_regen.regens.clone(),
+                                    ),
                                 },
                             );
 

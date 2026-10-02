@@ -18,6 +18,21 @@ pub struct BankStorage {
     pub slots: Vec<Option<Item>>,
 }
 
+/// Borrowed view of a bank which serialises to exactly the same JSON as [`BankStorage`], so a
+/// live bank can be saved without cloning its items.
+///
+/// Field names, field order and serde attributes must stay identical to [`BankStorage`].
+#[derive(Serialize)]
+pub struct BankStorageRef<'a> {
+    pub slots: &'a [Option<Item>],
+}
+
+impl BankStorageRef<'_> {
+    pub fn save(&self, account_name: &str) -> Result<(), anyhow::Error> {
+        save_bank_json(self, account_name, true)
+    }
+}
+
 fn get_bank_path(account_name: &str) -> PathBuf {
     BANK_STORAGE_DIR.join(format!("{}.json", account_name))
 }
@@ -25,7 +40,7 @@ fn get_bank_path(account_name: &str) -> PathBuf {
 impl BankStorage {
     pub fn create(account_name: &str) -> Result<Self, anyhow::Error> {
         let bank = BankStorage::default();
-        bank.save_impl(account_name, false)?;
+        save_bank_json(&bank, account_name, false)?;
         Ok(bank)
     }
 
@@ -47,58 +62,62 @@ impl BankStorage {
     }
 
     pub fn save(&self, account_name: &str) -> Result<(), anyhow::Error> {
-        self.save_impl(account_name, true)
+        save_bank_json(self, account_name, true)
     }
+}
 
-    fn save_impl(&self, account_name: &str, allow_overwrite: bool) -> Result<(), anyhow::Error> {
-        let path = get_bank_path(account_name);
-        let storage_dir = path.parent().unwrap();
+fn save_bank_json<T: Serialize>(
+    bank: &T,
+    account_name: &str,
+    allow_overwrite: bool,
+) -> Result<(), anyhow::Error> {
+    let path = get_bank_path(account_name);
+    let storage_dir = path.parent().unwrap();
 
-        std::fs::create_dir_all(storage_dir).with_context(|| {
+    std::fs::create_dir_all(storage_dir).with_context(|| {
+        format!(
+            "Failed to create bank storage directory {}",
+            storage_dir.to_string_lossy()
+        )
+    })?;
+
+    let json = serde_json::to_string_pretty(bank).with_context(|| {
+        format!(
+            "Failed to serialise BankStorage whilst saving bank for account {}",
+            account_name
+        )
+    })?;
+
+    let mut file = tempfile::Builder::new()
+        .tempfile_in(storage_dir)
+        .with_context(|| {
             format!(
-                "Failed to create bank storage directory {}",
-                storage_dir.to_string_lossy()
-            )
-        })?;
-
-        let json = serde_json::to_string_pretty(&self).with_context(|| {
-            format!(
-                "Failed to serialise BankStorage whilst saving bank for account {}",
+                "Failed to create temporary file whilst saving bank for account {}",
                 account_name
             )
         })?;
+    file.write_all(json.as_bytes()).with_context(|| {
+        format!(
+            "Failed to write data to temporary file whilst saving bank for account {}",
+            account_name
+        )
+    })?;
 
-        let mut file = tempfile::Builder::new()
-            .tempfile_in(storage_dir)
-            .with_context(|| {
-                format!(
-                    "Failed to create temporary file whilst saving bank for account {}",
-                    account_name
-                )
-            })?;
-        file.write_all(json.as_bytes()).with_context(|| {
+    if allow_overwrite {
+        file.persist(&path).with_context(|| {
             format!(
-                "Failed to write data to temporary file whilst saving bank for account {}",
-                account_name
+                "Failed to persist temporary bank file to path {}",
+                path.to_string_lossy()
             )
         })?;
-
-        if allow_overwrite {
-            file.persist(&path).with_context(|| {
-                format!(
-                    "Failed to persist temporary bank file to path {}",
-                    path.to_string_lossy()
-                )
-            })?;
-        } else {
-            file.persist_noclobber(&path).with_context(|| {
-                format!(
-                    "Failed to persist_noclobber bank account file to path {}",
-                    path.to_string_lossy()
-                )
-            })?;
-        }
-
-        Ok(())
+    } else {
+        file.persist_noclobber(&path).with_context(|| {
+            format!(
+                "Failed to persist_noclobber bank account file to path {}",
+                path.to_string_lossy()
+            )
+        })?;
     }
+
+    Ok(())
 }

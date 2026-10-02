@@ -2,7 +2,6 @@ use bevy::ecs::{change_detection::Mut, prelude::Entity};
 use bevy::math::{UVec2, Vec2, Vec3, Vec3Swizzles};
 use bevy::prelude::Resource;
 use bitvec::prelude::*;
-use std::collections::HashMap;
 
 use rose_data::{ZoneData, ZoneDatabase, ZoneId};
 
@@ -66,6 +65,10 @@ pub struct ClientEntityZone {
     // The list of entities currently inside this zone
     entities: Vec<Option<(Entity, ClientEntity, Vec3)>>,
 
+    // Bit set for every id whose `entities` slot is Some, plus id 0 which is never handed out,
+    // so the lowest free id is the first zero bit
+    occupied_ids: ClientEntitySet,
+
     // The list of entities leaving the zone, this is so we can process any
     // visibility changes before freeing the entity id
     leaving_entities: Vec<ClientEntityId>,
@@ -75,6 +78,9 @@ impl ClientEntityZone {
     pub fn new(zone_info: &ZoneData) -> Self {
         let sector_size = zone_info.sector_size as f32;
         let sector_limit = (sector_size / 2.0) + (sector_size * 0.2);
+
+        let mut occupied_ids = ClientEntitySet::default();
+        occupied_ids.set(0, true);
 
         Self {
             zone_id: zone_info.id,
@@ -87,6 +93,7 @@ impl ClientEntityZone {
                 (zone_info.num_sectors_x * zone_info.num_sectors_y) as usize
             ],
             entities: vec![None; MAX_CLIENT_ENTITY_ID],
+            occupied_ids,
             leaving_entities: Vec::new(),
         }
     }
@@ -138,10 +145,11 @@ impl ClientEntityZone {
     where
         F: FnMut(&mut ClientEntityZoneSector),
     {
-        let min_sector_x = sector.x.saturating_sub(1);
-        let max_sector_x = u32::min(sector.x + 1, self.sector_count.x - 1);
-        let min_sector_y = sector.y.saturating_sub(1);
-        let max_sector_y = u32::min(sector.y + 1, self.sector_count.y - 1);
+        // 7x7 sector window (radius 3) so monsters spawn roughly twice as far away.
+        let min_sector_x = sector.x.saturating_sub(3);
+        let max_sector_x = u32::min(sector.x + 3, self.sector_count.x - 1);
+        let min_sector_y = sector.y.saturating_sub(3);
+        let max_sector_y = u32::min(sector.y + 3, self.sector_count.y - 1);
 
         for x in min_sector_x..=max_sector_x {
             for y in min_sector_y..=max_sector_y {
@@ -174,19 +182,15 @@ impl ClientEntityZone {
     ) -> Option<(ClientEntity, ClientEntitySector)> {
         let sector = self.calculate_sector(position.xy());
 
-        // Allocate an entity id, skipping over invalid entity id
-        let (free_index, free_slot) = self
-            .entities
-            .iter_mut()
-            .enumerate()
-            .skip(1)
-            .find(|(_, slot)| slot.is_none())?;
+        // Allocate the lowest free entity id (id 0 is invalid and always marked occupied)
+        let free_index = self.occupied_ids[..MAX_CLIENT_ENTITY_ID].first_zero()?;
         let client_entity_id = ClientEntityId(free_index);
         let client_entity = ClientEntity::new(entity_type, client_entity_id, self.zone_id);
         let client_entity_sector = ClientEntitySector::new(sector);
 
         // Join zone
-        *free_slot = Some((entity, client_entity.clone(), position));
+        self.entities[free_index] = Some((entity, client_entity.clone(), position));
+        self.occupied_ids.set(free_index, true);
 
         // Join sector
         self.join_sector(sector, client_entity_id);
@@ -244,6 +248,7 @@ impl ClientEntityZone {
         // Free the entity id
         for id in self.leaving_entities.iter() {
             self.entities[id.0] = None;
+            self.occupied_ids.set(id.0, false);
         }
 
         self.leaving_entities.clear();
@@ -349,29 +354,39 @@ impl<'a, 'b> Iterator for ClientEntityZoneEntityIterator<'a, 'b> {
 
 #[derive(Resource)]
 pub struct ClientEntityList {
-    pub zones: HashMap<ZoneId, ClientEntityZone>,
+    // Indexed by zone id; looked up on every position update, so a Vec instead of a HashMap
+    zones: Vec<Option<ClientEntityZone>>,
 }
 
 impl ClientEntityList {
     pub fn new(zone_database: &ZoneDatabase) -> Self {
-        let mut zones = HashMap::new();
+        let mut zones: Vec<Option<ClientEntityZone>> = Vec::new();
         for zone in zone_database.iter() {
-            zones.insert(zone.id, ClientEntityZone::new(zone));
+            let index = zone.id.get() as usize;
+            if zones.len() <= index {
+                zones.resize_with(index + 1, || None);
+            }
+            zones[index] = Some(ClientEntityZone::new(zone));
         }
         Self { zones }
     }
 
     pub fn get_zone(&self, zone_id: ZoneId) -> Option<&ClientEntityZone> {
-        self.zones.get(&zone_id)
+        self.zones
+            .get(zone_id.get() as usize)
+            .and_then(Option::as_ref)
     }
 
     pub fn get_zone_mut(&mut self, zone_id: ZoneId) -> Option<&mut ClientEntityZone> {
-        self.zones.get_mut(&zone_id)
+        self.zones
+            .get_mut(zone_id.get() as usize)
+            .and_then(Option::as_mut)
     }
 
     pub fn process_zone_leavers(&mut self) {
         self.zones
-            .values_mut()
+            .iter_mut()
+            .flatten()
             .for_each(ClientEntityZone::process_zone_leavers);
     }
 }

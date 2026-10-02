@@ -8,12 +8,50 @@ use std::sync::Arc;
 
 use bevy::prelude::Entity;
 use crossbeam_channel::{Receiver, Sender};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
+use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use super::models::Position;
 use super::state::BotInfo;
 use crate::game::components::BotBehaviorMode;
+
+/// Reply slot for an API query answered by the game thread.
+///
+/// Wraps a tokio oneshot so the HTTP handler awaits the reply without
+/// blocking a runtime worker thread. It is cloneable (one shared slot) so
+/// `LlmBotCommand` stays `Clone`; only the first `send` delivers, and the
+/// requester sees a closed channel once every clone is dropped unanswered.
+pub struct ResponseSender<T>(Arc<Mutex<Option<oneshot::Sender<T>>>>);
+
+impl<T> ResponseSender<T> {
+    /// Delivers `value`, or hands it back when the requester stopped waiting
+    /// (timed out) or a reply was already sent.
+    pub fn send(&self, value: T) -> Result<(), T> {
+        match self.0.lock().take() {
+            Some(sender) => sender.send(value),
+            None => Err(value),
+        }
+    }
+}
+
+impl<T> Clone for ResponseSender<T> {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl<T> std::fmt::Debug for ResponseSender<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ResponseSender")
+    }
+}
+
+/// Creates a reply slot and the receiver the API handler awaits.
+pub fn response_channel<T>() -> (ResponseSender<T>, oneshot::Receiver<T>) {
+    let (sender, receiver) = oneshot::channel();
+    (ResponseSender(Arc::new(Mutex::new(Some(sender)))), receiver)
+}
 
 /// Response from a DeleteBot command
 #[derive(Debug, Clone)]
@@ -115,7 +153,7 @@ pub enum LlmBotCommand {
         /// Bot ID to delete
         bot_id: Uuid,
         /// Response channel to send confirmation back to API handler
-        response_tx: Sender<DeleteBotResponse>,
+        response_tx: ResponseSender<DeleteBotResponse>,
     },
 
     /// Move bot to a position
@@ -221,7 +259,7 @@ pub enum LlmBotCommand {
         /// Bot ID
         bot_id: Uuid,
         /// Response channel to send context back to API handler
-        response_tx: Sender<GetBotContextResponse>,
+        response_tx: ResponseSender<GetBotContextResponse>,
     },
 
     /// Get bot skills
@@ -229,7 +267,7 @@ pub enum LlmBotCommand {
         /// Bot ID
         bot_id: Uuid,
         /// Response channel to send skills back to API handler
-        response_tx: Sender<GetBotSkillsResponse>,
+        response_tx: ResponseSender<GetBotSkillsResponse>,
     },
 
     /// Get chat history for a bot
@@ -237,27 +275,27 @@ pub enum LlmBotCommand {
         /// Bot ID
         bot_id: Uuid,
         /// Response channel to send chat history back to API handler
-        response_tx: Sender<GetChatHistoryResponse>,
+        response_tx: ResponseSender<GetChatHistoryResponse>,
     },
 
     /// Get list of all bots with their current status
     GetBotList {
         /// Response channel to send bot list back to API handler
-        response_tx: Sender<GetBotListResponse>,
+        response_tx: ResponseSender<GetBotListResponse>,
     },
     /// Get bot inventory
     GetBotInventory {
         /// Bot ID
         bot_id: Uuid,
         /// Response channel
-        response_tx: Sender<GetBotInventoryResponse>,
+        response_tx: ResponseSender<GetBotInventoryResponse>,
     },
     /// Get player status
     GetPlayerStatus {
         /// Bot ID (to find the assigned player)
         bot_id: Uuid,
         /// Response channel
-        response_tx: Sender<GetPlayerStatusResponse>,
+        response_tx: ResponseSender<GetPlayerStatusResponse>,
     },
     /// Teleport bot to player
     TeleportToPlayer {
@@ -285,7 +323,7 @@ pub enum LlmBotCommand {
         /// Bot ID
         bot_id: Uuid,
         /// Response channel
-        response_tx: Sender<GetZoneInfoResponse>,
+        response_tx: ResponseSender<GetZoneInfoResponse>,
     },
 }
 
@@ -453,7 +491,7 @@ mod tests {
     fn test_register_and_get_bot() {
         let manager = LlmBotManager::new();
         let bot_id = Uuid::new_v4();
-        let entity = Entity::from(42);
+        let entity = Entity::from_bits(42);
 
         manager.register_bot(bot_id, "TestBot".to_string(), Some("Player1".to_string()));
         manager.register_bot_entity(bot_id, entity);
@@ -470,13 +508,22 @@ mod tests {
     fn test_unregister_bot() {
         let manager = LlmBotManager::new();
         let bot_id = Uuid::new_v4();
-        let entity = Entity::from(42);
+        let entity = Entity::from_bits(42);
 
         manager.register_bot(bot_id, "TestBot".to_string(), None);
         manager.register_bot_entity(bot_id, entity);
         manager.unregister_bot(&bot_id);
 
         assert!(!manager.bot_exists(&bot_id));
+    }
+
+    #[test]
+    fn test_response_sender_delivers_once() {
+        let (response_tx, mut response_rx) = response_channel::<u32>();
+        let clone = response_tx.clone();
+        assert!(response_tx.send(1).is_ok());
+        assert_eq!(clone.send(2), Err(2));
+        assert_eq!(response_rx.try_recv(), Ok(1));
     }
 
     #[test]

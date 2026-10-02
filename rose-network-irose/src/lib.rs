@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 mod packet_codec;
-pub use packet_codec::{ClientPacketCodec, ServerPacketCodec, IROSE_112_TABLE};
+pub use packet_codec::{ClientPacketCodec, ServerPacketCodec, IROSE_112_TABLE, MAX_PACKET_SIZE};
 
 pub mod common_packets;
 pub mod game_client_packets;

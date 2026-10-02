@@ -24,11 +24,11 @@ mod party_system;
 mod passive_recovery_system;
 mod personal_store_system;
 mod pickup_item_system;
-mod position_reconciliation_system;
 mod quest_system;
 mod restore_llm_bots_system;
 mod revive_event_system;
 mod reward_item_system;
+mod sailing_system;
 mod save_system;
 mod server_messages_system;
 mod skill_effect_system;
@@ -64,29 +64,28 @@ pub use game_server_system::{
 pub use item_life_system::item_life_system;
 pub use llm_buddy_bot_system::{
     llm_buddy_bot_auto_accept_party_system, llm_buddy_chat_capture_system, llm_buddy_follow_system,
-    llm_buddy_status_update_system, process_llm_bot_commands_system, LlmBotCommandReceiver,
+    process_llm_bot_commands_system, LlmBotCommandReceiver,
     LlmBotManagerResource, llm_bot_admin_command_system,
 };
 pub use llm_bot_teleport_to_player_system::llm_bot_teleport_to_player_on_login_system;
 pub use login_server_system::{login_server_authentication_system, login_server_system};
 pub use monster_spawn_system::monster_spawn_system;
-pub use npc_ai_system::npc_ai_system;
+pub use npc_ai_system::{delayed_spawn_system, npc_ai_system};
 pub use npc_store_system::npc_store_system;
 pub use party_system::{
     party_member_event_system, party_member_update_info_system, party_system,
     party_update_average_level_system,
 };
-pub use passive_recovery_system::passive_recovery_system;
 pub use personal_store_system::personal_store_system;
 pub use pickup_item_system::pickup_item_system;
-pub use position_reconciliation_system::{
-    add_position_snapshot_timer_system, position_reconciliation_system,
-    PositionReconciliationConfig, PositionSnapshotTimer,
-};
 pub use quest_system::quest_system;
 pub use restore_llm_bots_system::restore_llm_buddy_bots_system;
 pub use revive_event_system::revive_event_system;
 pub use reward_item_system::reward_item_system;
+pub use sailing_system::{
+    sail_max_allowed_distance_cm, sail_state_broadcast_system, sail_teleport_threshold_cm,
+    server_wind_update_system, wind_broadcast_system, OCEAN_ZONE_ID, SAIL_MAX_SPEED_MS,
+};
 pub use save_system::save_system;
 pub use server_messages_system::server_messages_system;
 pub use skill_effect_system::skill_effect_system;

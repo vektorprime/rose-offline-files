@@ -11,7 +11,6 @@ use bevy::{
 };
 use bevy::math::Vec2;
 use chrono::Utc;
-use crossbeam_channel::Sender;
 use parking_lot::RwLock;
 use uuid::Uuid;
 
@@ -22,7 +21,7 @@ use crate::game::{
         },
         BotInfo, BotSummaryData, DeleteBotResponse, GetBotInventoryResponse, GetBotListResponse,
         GetBotSkillsResponse, GetChatHistoryResponse, GetPlayerStatusResponse, GetZoneInfoResponse,
-        LlmBotCommand,
+        LlmBotCommand, ResponseSender,
     },
     bundles::client_entity_leave_zone,
     components::{
@@ -48,7 +47,7 @@ pub struct LlmBotManagerResource {
     /// Pending commands to create bots (bot_id -> creation data)
     pub pending_creates: std::collections::HashMap<Uuid, LlmBotCommand>,
     /// Pending commands to delete bots (bot_id, response_channel)
-    pub pending_deletes: Vec<(Uuid, Sender<DeleteBotResponse>)>,
+    pub pending_deletes: Vec<(Uuid, ResponseSender<DeleteBotResponse>)>,
 }
 
 impl Default for LlmBotManagerResource {
@@ -91,6 +90,27 @@ impl LlmBotCommandReceiver {
             }
         }
     }
+
+    /// True when API commands are waiting to be processed.
+    pub fn has_pending(&self) -> bool {
+        !self.receiver.is_empty()
+    }
+}
+
+/// Run condition for `process_llm_bot_commands_system`. Its only inputs are
+/// the API command channel and `pending_deletes`, which that system fills and
+/// drains within the same run, so skipping it otherwise is behaviour-neutral.
+pub fn llm_bot_commands_pending(
+    command_receiver: Res<LlmBotCommandReceiver>,
+    bot_manager: Res<LlmBotManagerResource>,
+) -> bool {
+    command_receiver.has_pending() || !bot_manager.pending_deletes.is_empty()
+}
+
+/// Run condition for `process_llm_bot_creations_system`, whose only input is
+/// `pending_creates` (queued by `process_llm_bot_commands_system`).
+pub fn llm_bot_creations_pending(bot_manager: Res<LlmBotManagerResource>) -> bool {
+    !bot_manager.pending_creates.is_empty()
 }
 
 /// System that processes incoming LLM bot commands
@@ -144,7 +164,8 @@ pub fn process_llm_bot_commands_system(
         log::info!("Received command #{} from channel, processing...", command_count);
         match command {
             LlmBotCommand::GetBotInventory { bot_id, response_tx } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     if let Ok(inventory) = inventory_query.get(entity) {
                         let mut items = Vec::new();
@@ -290,18 +311,25 @@ pub fn process_llm_bot_commands_system(
                 target_entity,
                 move_mode,
             } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     // log::info!("[LLM_DEBUG] Processing Move command for bot {}: entity {:?}", bot_id, entity);
-                    if let Ok((mut buddy_bot, _, mut next_command, _, _)) = bot_query.get_mut(entity) {
+                    if let Ok((mut buddy_bot, _, mut next_command, bot_position, _)) = bot_query.get_mut(entity) {
                         // Stop following when manually moving
                         buddy_bot.is_following = false;
 
                         let dest = Vec3::new(destination.x, destination.y, destination.z);
+                        // ClientEntityIds are allocated per zone: only an entity in
+                        // the bot's zone is the one the caller saw.
+                        let bot_zone = bot_position.zone_id;
                         let target = target_entity.and_then(|id| {
                             entity_query
                                 .iter()
-                                .find(|(_, client_entity, _, _, _, _, _, _, _, _, _)| client_entity.id.0 == id as usize)
+                                .find(|(_, client_entity, pos_opt, _, _, _, _, _, _, _, _)| {
+                                    client_entity.id.0 == id as usize
+                                        && pos_opt.map_or(false, |pos| pos.zone_id == bot_zone)
+                                })
                                 .map(|(entity, _, _, _, _, _, _, _, _, _, _)| entity)
                         });
                         let mode = parse_move_mode(&move_mode);
@@ -328,7 +356,8 @@ pub fn process_llm_bot_commands_system(
                 player_name,
                 distance,
             } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     // log::info!("[LLM_DEBUG] Processing Follow command for bot {}: entity {:?}", bot_id, entity);
                     if let Ok((mut buddy_bot, _, _, _, _)) = bot_query.get_mut(entity) {
@@ -358,7 +387,8 @@ pub fn process_llm_bot_commands_system(
                 bot_id,
                 target_entity_id,
             } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     log::info!("Processing Attack command for bot {}: entity {:?}", bot_id, entity);
                     if let Ok((mut buddy_bot, mut command, mut next_command, bot_position, _)) = bot_query.get_mut(entity) {
@@ -421,7 +451,8 @@ pub fn process_llm_bot_commands_system(
                 target_entity_id,
                 target_position,
             } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     log::info!("Processing UseSkill command for bot {}: entity {:?}", bot_id, entity);
                     if let Ok((mut buddy_bot, _, mut next_command, bot_position, _)) = bot_query.get_mut(entity) {
@@ -508,7 +539,8 @@ pub fn process_llm_bot_commands_system(
                 message,
                 chat_type,
             } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     log::info!("Processing Chat command for bot {}: entity {:?}", bot_id, entity);
                     log::info!(
@@ -602,7 +634,8 @@ pub fn process_llm_bot_commands_system(
                 }
             }
             LlmBotCommand::Stop { bot_id } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     log::info!("Processing Stop command for bot {}: entity {:?}", bot_id, entity);
                     if let Ok((mut buddy_bot, _, mut next_command, _, _)) = bot_query.get_mut(entity) {
@@ -619,7 +652,8 @@ pub fn process_llm_bot_commands_system(
                 }
             }
             LlmBotCommand::Sit { bot_id } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     log::info!("Processing Sit command for bot {}: entity {:?}", bot_id, entity);
                     if let Ok((_, _, mut next_command, _, _)) = bot_query.get_mut(entity) {
@@ -635,7 +669,8 @@ pub fn process_llm_bot_commands_system(
                 }
             }
             LlmBotCommand::Stand { bot_id } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     log::info!("Processing Stand command for bot {}: entity {:?}", bot_id, entity);
                     if let Ok((_, _, mut next_command, _, _)) = bot_query.get_mut(entity) {
@@ -654,22 +689,35 @@ pub fn process_llm_bot_commands_system(
                 bot_id,
                 item_entity_id,
             } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     log::info!("Processing Pickup command for bot {}: entity {:?}", bot_id, entity);
-                    if let Ok((_, _, mut next_command, _, _)) = bot_query.get_mut(entity) {
+                    if let Ok((_, _, mut next_command, bot_position, _)) = bot_query.get_mut(entity) {
+                        // ClientEntityIds are per zone; an id that is not in the
+                        // bot's zone must not resolve to some unrelated entity.
+                        let bot_zone = bot_position.zone_id;
                         let target = entity_query
                             .iter()
-                            .find(|(_, client_entity, _, _, _, _, _, _, _, _, _)| client_entity.id.0 == item_entity_id as usize)
-                            .map(|(entity, _, _, _, _, _, _, _, _, _, _)| entity)
-                            .unwrap_or_else(|| {
-                                Entity::from_raw_u32(item_entity_id).unwrap_or(Entity::PLACEHOLDER)
-                            });
-                        
-                        next_command.command = Some(CommandData::PickupItemDrop { target });
-                        next_command.has_sent_server_message = false;
+                            .find(|(_, client_entity, pos_opt, _, _, _, _, _, _, _, _)| {
+                                client_entity.id.0 == item_entity_id as usize
+                                    && pos_opt.map_or(false, |pos| pos.zone_id == bot_zone)
+                            })
+                            .map(|(entity, _, _, _, _, _, _, _, _, _, _)| entity);
 
-                        log::info!("LLM bot {} picking up item {}", bot_id, item_entity_id);
+                        if let Some(target) = target {
+                            next_command.command = Some(CommandData::PickupItemDrop { target });
+                            next_command.has_sent_server_message = false;
+
+                            log::info!("LLM bot {} picking up item {}", bot_id, item_entity_id);
+                        } else {
+                            log::warn!(
+                                "LLM bot {} cannot find item with ClientEntityId {} in zone {:?}",
+                                bot_id,
+                                item_entity_id,
+                                bot_zone
+                            );
+                        }
                     } else {
                         log::warn!("Pickup command failed: bot {} entity {:?} not found in bot_query (may be placeholder or despawned)", bot_id, entity);
                     }
@@ -678,7 +726,8 @@ pub fn process_llm_bot_commands_system(
                 }
             }
             LlmBotCommand::AttackNearest { bot_id } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     log::info!("Processing AttackNearest command for bot {}: entity {:?}", bot_id, entity);
                     if let Ok((mut buddy_bot, _, mut next_command, bot_position, _)) = bot_query.get_mut(entity) {
@@ -716,7 +765,8 @@ pub fn process_llm_bot_commands_system(
                 }
             }
             LlmBotCommand::PickupNearestItem { bot_id } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     log::info!("Processing PickupNearestItem command for bot {}: entity {:?}", bot_id, entity);
                     if let Ok((_, _, mut next_command, bot_position, _)) = bot_query.get_mut(entity) {
@@ -755,7 +805,8 @@ pub fn process_llm_bot_commands_system(
                 emote_id,
                 is_stop,
             } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     log::info!("Processing Emote command for bot {}: entity {:?}", bot_id, entity);
                     if let Ok((_, _, mut next_command, _, _)) = bot_query.get_mut(entity) {
@@ -775,7 +826,8 @@ pub fn process_llm_bot_commands_system(
             }
             LlmBotCommand::GetBotContext { bot_id, response_tx } => {
                 // Get nearby threats and items for this bot
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     if let Ok((_, _, _, bot_position, _)) = bot_query.get(entity) {
                         let bot_pos = bot_position.position;
@@ -876,17 +928,6 @@ pub fn process_llm_bot_commands_system(
                             }
                         }
 
-                        // DIAGNOSTIC: Log the entity IDs being returned to help debug entity ID mismatch issues
-                        let monster_ids: Vec<(u32, &str)> = entities.iter()
-                            .filter(|e| e.entity_type == crate::game::api::models::NearbyEntityType::Monster)
-                            .take(5)
-                            .map(|e| (e.entity_id, e.name.as_str()))
-                            .collect();
-                        let player_ids: Vec<(u32, &str)> = entities.iter()
-                            .filter(|e| e.entity_type == crate::game::api::models::NearbyEntityType::Player)
-                            .map(|e| (e.entity_id, e.name.as_str()))
-                            .collect();
-                        
                         let _ = response_tx.send(crate::game::api::GetBotContextResponse {
                             success: true,
                             error: None,
@@ -911,7 +952,8 @@ pub fn process_llm_bot_commands_system(
             }
             LlmBotCommand::GetBotSkills { bot_id, response_tx } => {
                 // Get skills for this bot
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     if let Ok(skill_list) = skill_query.get(entity) {
                         let mut skills: Vec<crate::game::api::models::SkillInfo> = Vec::new();
@@ -978,8 +1020,15 @@ pub fn process_llm_bot_commands_system(
                 // Get all bots with their current position and status
                 let mut bots: Vec<BotSummaryData> = Vec::new();
                 
-                let bots_map = bot_manager.bots_map.read();
-                for (bot_id, bot_info) in bots_map.iter() {
+                // Snapshot (same iteration order) so queries and logging run
+                // without holding the lock the API threads also take.
+                let bots_snapshot: Vec<(Uuid, BotInfo)> = bot_manager
+                    .bots_map
+                    .read()
+                    .iter()
+                    .map(|(bot_id, bot_info)| (*bot_id, bot_info.clone()))
+                    .collect();
+                for (bot_id, bot_info) in bots_snapshot.iter() {
                     let entity = bot_info.entity;
                     
                     // Try to get position and health from the entity
@@ -1065,7 +1114,8 @@ pub fn process_llm_bot_commands_system(
             }
             LlmBotCommand::GetChatHistory { bot_id, response_tx } => {
                 // Get chat history for this bot
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     if let Ok((buddy_bot, _, _, _, _)) = bot_query.get(entity) {
                         // Convert chat messages from component to API format
@@ -1110,7 +1160,8 @@ pub fn process_llm_bot_commands_system(
                 item_slot,
                 target_entity_id,
             } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     log::info!(
                         "Processing UseItem command for bot {}: entity {:?}",
@@ -1119,32 +1170,50 @@ pub fn process_llm_bot_commands_system(
                     );
 
                     let target_entity = if let Some(entity_id) = target_entity_id {
-                        entity_query
-                            .iter()
-                            .find(|(_, client_entity, _, _, _, _, _, _, _, _, _)| {
-                                client_entity.id.0 == entity_id as usize
-                            })
-                            .map(|(entity, _, _, _, _, _, _, _, _, _, _)| entity)
-                            .unwrap_or_else(|| {
-                                Entity::from_raw_u32(entity_id).unwrap_or(Entity::PLACEHOLDER)
-                            })
+                        // ClientEntityIds are per zone; resolve within the bot's zone
+                        // and never fall back to an unrelated entity.
+                        let bot_zone = bot_status_query
+                            .get(entity)
+                            .ok()
+                            .map(|(position, _, _, _, _, _)| position.zone_id);
+                        let target = bot_zone.and_then(|bot_zone| {
+                            entity_query
+                                .iter()
+                                .find(|(_, client_entity, pos_opt, _, _, _, _, _, _, _, _)| {
+                                    client_entity.id.0 == entity_id as usize
+                                        && pos_opt.map_or(false, |pos| pos.zone_id == bot_zone)
+                                })
+                                .map(|(entity, _, _, _, _, _, _, _, _, _, _)| entity)
+                        });
+                        if target.is_none() {
+                            log::warn!(
+                                "LLM bot {} cannot find item target with ClientEntityId {} in its zone {:?}",
+                                bot_id,
+                                entity_id,
+                                bot_zone
+                            );
+                        }
+                        target
                     } else {
                         // Default to self if no target specified
-                        entity
+                        Some(entity)
                     };
 
-                    use_item_events.write(crate::game::events::UseItemEvent::from_inventory(
-                        entity,
-                        rose_game_common::components::ItemSlot::Inventory(
-                            rose_game_common::components::InventoryPageType::Consumables,
-                            item_slot as usize,
-                        ),
-                        Some(target_entity),
-                    ));
+                    if let Some(target_entity) = target_entity {
+                        use_item_events.write(crate::game::events::UseItemEvent::from_inventory(
+                            entity,
+                            rose_game_common::components::ItemSlot::Inventory(
+                                rose_game_common::components::InventoryPageType::Consumables,
+                                item_slot as usize,
+                            ),
+                            Some(target_entity),
+                        ));
+                    }
                 }
             }
             LlmBotCommand::SetBehaviorMode { bot_id, mode } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     log::info!(
                         "Processing SetBehaviorMode command for bot {}: entity {:?}, mode {:?}",
@@ -1160,7 +1229,8 @@ pub fn process_llm_bot_commands_system(
                 }
             }
             LlmBotCommand::GetZoneInfo { bot_id, response_tx } => {
-                if let Some(bot_info) = bot_manager.bots_map.read().get(&bot_id).cloned() {
+                let bot_info = bot_manager.bots_map.read().get(&bot_id).cloned();
+                if let Some(bot_info) = bot_info {
                     let entity = bot_info.entity;
                     if let Ok((_, _, _, bot_position, _)) = bot_query.get(entity) {
                         let zone_id = bot_position.zone_id;
@@ -1240,12 +1310,12 @@ pub fn process_llm_bot_commands_system(
     let _ = game_data;
 
     // Process pending deletions
-    let deletes: Vec<(Uuid, Sender<DeleteBotResponse>)> = bot_manager.pending_deletes.drain(..).collect();
+    let deletes: Vec<(Uuid, ResponseSender<DeleteBotResponse>)> = bot_manager.pending_deletes.drain(..).collect();
     if !deletes.is_empty() {
         log::info!("Processing {} pending bot deletions", deletes.len());
     }
     for (bot_id, response_tx) in deletes {
-        log::info!("Processing deletion for bot {} - response_tx is_valid: {}", bot_id, !response_tx.is_empty());
+        log::info!("Processing deletion for bot {}", bot_id);
         
         // Check if bot exists in the map
         let bot_info_opt = bot_manager.bots_map.write().remove(&bot_id);
@@ -1290,7 +1360,7 @@ pub fn process_llm_bot_commands_system(
                         error: None,
                     }) {
                         Ok(_) => log::info!("Sent success response for bot {} deletion", bot_id),
-                        Err(e) => log::error!("Failed to send success response for bot {} deletion: {}", bot_id, e),
+                        Err(_) => log::error!("Failed to send success response for bot {} deletion: requester no longer waiting", bot_id),
                     }
                 }
                 Err(e) => {
@@ -1301,7 +1371,7 @@ pub fn process_llm_bot_commands_system(
                         error: Some(format!("Failed to delete from storage: {:?}", e)),
                     }) {
                         Ok(_) => log::info!("Sent storage failure response for bot {} deletion", bot_id),
-                        Err(e2) => log::error!("Failed to send failure response for bot {} deletion: {}", bot_id, e2),
+                        Err(_) => log::error!("Failed to send failure response for bot {} deletion: requester no longer waiting", bot_id),
                     }
                 }
             }
@@ -1313,7 +1383,7 @@ pub fn process_llm_bot_commands_system(
                 error: Some(format!("Bot {} not found in bots map", bot_id)),
             }) {
                 Ok(_) => log::info!("Sent not-found response for bot {} deletion", bot_id),
-                Err(e) => log::error!("Failed to send not-found response for bot {} deletion: {}", bot_id, e),
+                Err(_) => log::error!("Failed to send not-found response for bot {} deletion: requester no longer waiting", bot_id),
             }
         }
     }
@@ -1334,23 +1404,24 @@ fn parse_move_mode(mode: &str) -> Option<MoveMode> {
 /// and issues move commands if they're too far away.
 pub fn llm_buddy_follow_system(
     mut bot_query: Query<
-        (&LlmBuddyBot, &Position, &mut Command, &mut NextCommand),
+        (&LlmBuddyBot, &Position, &Command, &mut NextCommand),
         (Without<Dead>,),
     >,
     player_query: Query<(&Position, &ClientEntity, &crate::game::components::CharacterInfo), Without<LlmBuddyBot>>,
     bot_manager: Res<LlmBotManagerResource>,
 ) {
-    // Only process if there are bots registered
-    let bots_map = bot_manager.bots_map.read();
-    if bots_map.is_empty() {
-        return;
-    }
+    // Bot entities in map order; the lock is released before the player scans.
+    let bot_entities: Vec<Entity> = bot_manager
+        .bots_map
+        .read()
+        .values()
+        .map(|bot_info| bot_info.entity)
+        .collect();
 
     // For each bot that is in follow mode
-    for (&bot_id, bot_info) in bots_map.iter() {
-        let entity = bot_info.entity;
+    for entity in bot_entities {
         // Get bot's data
-        let Ok((buddy_bot, bot_position, mut command, mut next_command)) = bot_query.get_mut(entity)
+        let Ok((buddy_bot, bot_position, command, mut next_command)) = bot_query.get_mut(entity)
         else {
             continue;
         };
@@ -1495,33 +1566,6 @@ pub fn llm_buddy_chat_capture_system(
     }
 }
 
-/// System that updates status information for API queries
-///
-/// This system periodically updates cached status information that can be
-/// queried through the REST API.
-pub fn llm_buddy_status_update_system(
-    bot_query: Query<
-        (
-            &LlmBuddyBot,
-            &Position,
-            &HealthPoints,
-            &ManaPoints,
-            &Stamina,
-            &AbilityValues,
-            &Command,
-            Option<&crate::game::components::CharacterInfo>,
-            Option<&crate::game::components::Level>,
-        ),
-        Without<Dead>,
-    >,
-    bot_manager: Res<LlmBotManagerResource>,
-) {
-    // This system could update a cached status structure that the API can read
-    // For now, the API queries the components directly
-    let _ = bot_query;
-    let _ = bot_manager;
-}
-
 /// Register a bot entity with the manager
 pub fn register_llm_bot(
     bot_manager: &mut ResMut<LlmBotManagerResource>,
@@ -1548,10 +1592,10 @@ pub fn unregister_llm_bot(bot_manager: &mut ResMut<LlmBotManagerResource>, bot_i
 /// When a party invite is sent to an LLM buddy bot, this system automatically
 /// accepts it so the bot can party with its assigned player.
 pub fn llm_buddy_bot_auto_accept_party_system(
-    mut bot_query: Query<(Entity, &mut crate::game::components::PartyMembership), With<LlmBuddyBot>>,
+    bot_query: Query<(Entity, &crate::game::components::PartyMembership), With<LlmBuddyBot>>,
     mut party_events: MessageWriter<crate::game::events::PartyEvent>,
 ) {
-    for (bot_entity, mut party_membership) in bot_query.iter_mut() {
+    for (bot_entity, party_membership) in bot_query.iter() {
         // Skip if already in a party
         if party_membership.party.is_some() {
             continue;
@@ -1588,9 +1632,14 @@ pub fn llm_bot_admin_command_system(
         if event.message == "@admin test all tools" {
             log::info!("[LLM_ADMIN] Received test command from {}", event.sender_name);
             
-            // Find the first available bot
-            let bots_map = bot_manager.bots_map.read();
-            if let Some((bot_id, bot_info)) = bots_map.iter().next() {
+            // Find the first available bot (lock released before testing)
+            let first_bot = bot_manager
+                .bots_map
+                .read()
+                .iter()
+                .next()
+                .map(|(bot_id, bot_info)| (*bot_id, bot_info.clone()));
+            if let Some((bot_id, bot_info)) = first_bot {
                 let bot_entity = bot_info.entity;
                 log::info!("[LLM_ADMIN] Testing tools for bot {} (entity {:?})", bot_id, bot_entity);
                 

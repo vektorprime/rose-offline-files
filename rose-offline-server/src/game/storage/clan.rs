@@ -81,15 +81,31 @@ impl ClanStorage {
 
         for entry in (CLAN_STORAGE_DIR.read_dir()?).flatten() {
             let path = entry.path();
-            let str = std::fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read file {}", path.to_string_lossy()))?;
-            let clan: Self = serde_json::from_str(&str).with_context(|| {
-                format!(
-                    "Failed to deserialise ClanStorage from file {}",
+
+            // One bad entry, e.g. a temporary file left behind by an interrupted save, must not
+            // prevent every other clan from loading.
+            if !path.extension().map_or(false, |ext| ext == "json") {
+                log::warn!(
+                    "Skipping non-clan file {} in clan storage directory",
                     path.to_string_lossy()
-                )
-            })?;
-            clan_list.push(clan);
+                );
+                continue;
+            }
+
+            let clan = std::fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read file {}", path.to_string_lossy()))
+                .and_then(|str| {
+                    serde_json::from_str::<Self>(&str).with_context(|| {
+                        format!(
+                            "Failed to deserialise ClanStorage from file {}",
+                            path.to_string_lossy()
+                        )
+                    })
+                });
+            match clan {
+                Ok(clan) => clan_list.push(clan),
+                Err(error) => log::warn!("Skipping clan file with error {:?}", error),
+            }
         }
 
         Ok(clan_list)

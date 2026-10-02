@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::bail;
 
 use crate::{
-    reader::RoseFileReader,
+    reader::{ReadError, RoseFileReader},
     types::{Quat4, Vec2, Vec3},
     RoseFile,
 };
@@ -19,6 +19,9 @@ pub struct ZmoFile {
 
 #[derive(Default)]
 pub struct ZmoReadOptions {
+    /// Leaves `channels` empty instead of storing every keyframe. The channel headers
+    /// and keyframe data size are still checked, so the read fails on exactly the
+    /// files a full read fails on; all other fields are read the same.
     pub skip_animation: bool,
 }
 
@@ -59,7 +62,31 @@ impl RoseFile for ZmoFile {
         let num_frames = reader.read_u32()? as usize;
         let mut channels = Vec::new();
 
-        if !read_options.skip_animation {
+        if read_options.skip_animation {
+            let channel_count = reader.read_u32()? as usize;
+            let mut frame_size: usize = 0;
+            for _ in 0..channel_count {
+                let channel_type = reader.read_u32()?;
+                let _channel_bone_index = reader.read_u32()?;
+                frame_size += match channel_type {
+                    1 => 0,
+                    2 | 8 => 12,
+                    4 => 16,
+                    32 | 64 | 128 | 256 => 8,
+                    16 | 512 | 1024 => 4,
+                    invalid => bail!("Invalid ZMO channel type: {}", invalid),
+                };
+            }
+
+            // The full read takes every keyframe value as a 4-byte float, so it fails
+            // exactly when fewer than `num_frames * frame_size` bytes remain.
+            if frame_size
+                .checked_mul(num_frames)
+                .is_none_or(|keyframes_size| reader.remaining() < keyframes_size)
+            {
+                return Err(ReadError::UnexpectedEof.into());
+            }
+        } else {
             let channel_count = reader.read_u32()? as usize;
             channels.reserve_exact(channel_count);
             for _ in 0..channel_count {

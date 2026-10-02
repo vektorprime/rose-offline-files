@@ -92,9 +92,13 @@ impl ApiState {
     /// Register a new bot with the state (with placeholder entity)
     pub fn register_bot(&self, bot_id: Uuid, name: String, assigned_player: Option<String>) {
         let info = BotInfo::new_placeholder(name.clone(), assigned_player.clone());
-        self.bots.write().insert(bot_id, info);
+        let bot_count = {
+            let mut bots = self.bots.write();
+            bots.insert(bot_id, info);
+            bots.len()
+        };
         log::info!("ApiState.register_bot: {} ({}) - map now has {} bots, pointer: {:p}",
-            bot_id, name, self.bots.read().len(), Arc::as_ptr(&self.bots));
+            bot_id, name, bot_count, Arc::as_ptr(&self.bots));
     }
 
     /// Register a new bot with full information
@@ -147,12 +151,22 @@ impl ApiState {
 
     /// Check if a bot exists
     pub fn bot_exists(&self, bot_id: &Uuid) -> bool {
-        let bots = self.bots.read();
-        let exists = bots.contains_key(bot_id);
+        // Gather under the read lock, log after releasing it: the game thread
+        // takes the same lock every tick.
+        let (exists, bot_count, sample_keys) = {
+            let bots = self.bots.read();
+            let exists = bots.contains_key(bot_id);
+            let sample_keys: Vec<Uuid> = if exists {
+                Vec::new()
+            } else {
+                bots.keys().take(5).copied().collect()
+            };
+            (exists, bots.len(), sample_keys)
+        };
         log::info!("bot_exists check for {}: {} (map has {} bots, pointer: {:p})",
-            bot_id, exists, bots.len(), Arc::as_ptr(&self.bots));
-        if !exists && !bots.is_empty() {
-            log::info!("  Keys in map: {:?}", bots.keys().take(5).collect::<Vec<_>>());
+            bot_id, exists, bot_count, Arc::as_ptr(&self.bots));
+        if !sample_keys.is_empty() {
+            log::info!("  Keys in map: {:?}", sample_keys);
         }
         exists
     }
@@ -182,7 +196,7 @@ mod tests {
         let bots_map = Arc::new(RwLock::new(HashMap::new()));
         let state = ApiState::new(tx, bots_map);
         let bot_id = Uuid::new_v4();
-        let entity = Entity::from(42);
+        let entity = Entity::from_bits(42);
 
         state.register_bot_full(
             bot_id,
@@ -214,8 +228,8 @@ mod tests {
         let bots_map = Arc::new(RwLock::new(HashMap::new()));
         let state = ApiState::new(tx, bots_map);
         let bot_id = Uuid::new_v4();
-        let initial_entity = Entity::from(0);
-        let real_entity = Entity::from(42);
+        let initial_entity = Entity::from_bits(0);
+        let real_entity = Entity::from_bits(42);
 
         state.register_bot(bot_id, "TestBot".to_string(), Some("Player1".to_string()));
         assert_eq!(state.get_bot_entity(&bot_id), Some(initial_entity));

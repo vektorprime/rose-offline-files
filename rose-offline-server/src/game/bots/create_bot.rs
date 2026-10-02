@@ -259,12 +259,15 @@ pub fn bot_build_artisan() -> BotBuild {
     }
 }
 
+/// Spends stat points toward the build's stat ratios. Returns true when at
+/// least one stat was increased.
 pub fn spend_stat_points(
     game_data: &GameData,
     bot_build: &BotBuild,
     stat_points: &mut StatPoints,
     basic_stats: &mut BasicStats,
-) {
+) -> bool {
+    let mut spent = false;
     loop {
         let current_stat_total = bot_build
             .basic_stat_ratios
@@ -304,7 +307,9 @@ pub fn spend_stat_points(
         let new_value = basic_stats.get(basic_stat_type) + 1;
         basic_stats.set(basic_stat_type, new_value);
         stat_points.points -= increase_cost;
+        spent = true;
     }
+    spent
 }
 
 pub fn spend_skill_points(
@@ -334,12 +339,14 @@ pub fn spend_skill_points(
     spend_skill_points_with_bundle(game_data, bot_build, &mut skill_list_bundle);
 }
 
+/// Learns / levels up the build's skills while points allow. Returns true
+/// when at least one skill was learnt or levelled up.
 pub fn spend_skill_points_with_bundle(
     game_data: &GameData,
     bot_build: &BotBuild,
     skill_list_bundle: &mut SkillListBundle,
-) {
-
+) -> bool {
+    let mut spent = false;
     'next_skill: loop {
         // Try find first skill that we can learn
         for base_skill_id in bot_build.skills.iter() {
@@ -353,6 +360,7 @@ pub fn spend_skill_points_with_bundle(
 
             if skill_list_try_learn_skill(game_data, skill_list_bundle, *base_skill_id).is_ok()
             {
+                spent = true;
                 continue 'next_skill;
             }
         }
@@ -368,6 +376,7 @@ pub fn spend_skill_points_with_bundle(
 
             if skill_list_try_level_up_skill(game_data, skill_list_bundle, skill_slot).is_ok()
             {
+                spent = true;
                 continue 'next_skill;
             }
         }
@@ -375,6 +384,7 @@ pub fn spend_skill_points_with_bundle(
         // No more skills we can learn or level up
         break;
     }
+    spent
 }
 
 fn level_up_bot(game_data: &GameData, level: u32, bot_data: &mut CharacterStorage) {

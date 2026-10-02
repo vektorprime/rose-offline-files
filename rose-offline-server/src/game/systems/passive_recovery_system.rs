@@ -18,6 +18,9 @@ use crate::game::{
 
 const RECOVERY_INTERVAL: Duration = Duration::from_secs(4);
 
+// Not registered in game_world.rs while auto-regen is disabled: with the body commented out,
+// running it every tick did nothing. Register it again when re-enabling the code below.
+#[allow(dead_code)]
 pub fn passive_recovery_system(
     mut query: Query<
         (

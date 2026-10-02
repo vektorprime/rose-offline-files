@@ -18,6 +18,7 @@ pub use skill_list::{
 };
 pub use skill_use::{
     check_skill_target_filter, skill_can_target_entity, skill_can_target_position,
-    skill_can_target_self, skill_can_use, SkillCasterBundle, SkillCasterBundleItem,
-    SkillTargetBundle, SkillTargetBundleItem, GLOBAL_SKILL_COOLDOWN,
+    skill_can_target_self, skill_can_use, skill_target_filter_allows,
+    skill_use_requirements_met, SkillCasterBundle, SkillCasterBundleItem, SkillTargetBundle,
+    SkillTargetBundleItem, GLOBAL_SKILL_COOLDOWN,
 };

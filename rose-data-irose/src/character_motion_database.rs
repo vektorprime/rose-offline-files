@@ -4,7 +4,7 @@ use rose_data::{
     CharacterMotionAction, CharacterMotionDatabase, CharacterMotionDatabaseOptions, MotionFileData,
     MotionId, VehicleMotionAction,
 };
-use rose_file_readers::{StbFile, VfsPathBuf, VirtualFilesystem, ZmoFile};
+use rose_file_readers::{StbFile, VfsPathBuf, VirtualFilesystem, ZmoFile, ZmoReadOptions};
 
 fn get_action_map() -> EnumMap<CharacterMotionAction, MotionId> {
     enum_map! {
@@ -54,7 +54,15 @@ fn load_motion_file_data(
     let path = VfsPathBuf::new(path);
 
     if options.load_frame_data {
-        let zmo = vfs.read_file::<ZmoFile, _>(&path).ok()?;
+        // Only header fields and frame events are used: skip storing the keyframes.
+        let zmo = vfs
+            .read_file_with::<ZmoFile, _>(
+                &path,
+                &ZmoReadOptions {
+                    skip_animation: true,
+                },
+            )
+            .ok()?;
         Some(MotionFileData {
             path,
             duration: zmo.get_duration(),

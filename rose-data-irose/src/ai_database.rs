@@ -41,5 +41,5 @@ pub fn get_ai_database(vfs: &VirtualFilesystem) -> Result<AiDatabase, anyhow::Er
     }
 
     debug!("Loaded {} AI files", aips.len());
-    Ok(AiDatabase { strings, aips })
+    Ok(AiDatabase::new(strings, aips))
 }

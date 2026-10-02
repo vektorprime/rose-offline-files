@@ -78,6 +78,26 @@ pub enum ClientMessage {
     MoveCollision {
         position: Vec3,
     },
+    SailInput {
+        rudder: f32,
+        throttle: f32,
+        heading: f32,
+        speed: f32,
+        sail_trim: f32,
+        x: f32,
+        y: f32,
+        z: f32,
+    },
+    BoardBoat {
+        x: f32,
+        y: f32,
+        z: f32,
+    },
+    DisembarkBoat {
+        x: f32,
+        y: f32,
+        z: f32,
+    },
     Attack {
         target_entity_id: ClientEntityId,
     },

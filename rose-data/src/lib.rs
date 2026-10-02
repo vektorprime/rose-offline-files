@@ -70,6 +70,7 @@ mod item;
 mod item_database;
 mod job_class_database;
 mod motion_file_data;
+mod nav_grid;
 mod npc_database;
 mod quest_database;
 mod skill_database;
@@ -107,6 +108,7 @@ pub use item_database::{
 };
 pub use job_class_database::{JobClassData, JobClassDatabase, JobClassId, JobId};
 pub use motion_file_data::{MotionFileData, MotionId};
+pub use nav_grid::{NavGrid, NAV_AGENT_RADIUS_CM, NAV_MAX_CELLS_PER_AXIS, NAV_PREFERRED_CELL_CM};
 pub use npc_database::{
     NpcConversationData, NpcConversationId, NpcData, NpcDatabase, NpcDatabaseOptions, NpcId,
     NpcMotionAction, NpcStoreTabData, NpcStoreTabId,

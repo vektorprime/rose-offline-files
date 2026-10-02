@@ -12,7 +12,6 @@ use rose_game_common::{
 };
 
 use crate::game::{
-    bundles::client_entity_leave_zone,
     components::{
         ClientEntity, ClientEntitySector, GameClient, Owner, Party, PartyMember, PartyMembership,
         PartyOwner, Position,
@@ -97,6 +96,13 @@ pub fn pickup_item_system(
 
                                 for party_member in party.members.iter() {
                                     if let PartyMember::Online(party_member_entity) = party_member {
+                                        // The picker receives their share through the normal
+                                        // pickup below (the drop is replaced by that share), so
+                                        // paying them here as well would pay them twice.
+                                        if *party_member_entity == pickup_item_event.pickup_entity {
+                                            continue;
+                                        }
+
                                         if let Ok((mut inventory, game_client)) =
                                             query_inventory.get_mut(*party_member_entity)
                                         {
@@ -259,15 +265,15 @@ pub fn pickup_item_system(
             }
 
             if pickup_item.item_drop.item.is_none() {
-                // Delete picked up item
-                client_entity_leave_zone(
-                    &mut commands,
-                    &mut client_entity_list,
-                    pickup_item_event.item_entity,
-                    pickup_item.client_entity,
-                    pickup_item.client_entity_sector,
-                    pickup_item.position,
-                );
+                // Delete picked up item. Only the zone slot needs releasing: removing the
+                // client entity components first is redundant as the entity is despawned.
+                if let Some(zone) = client_entity_list.get_zone_mut(pickup_item.position.zone_id) {
+                    zone.leave_zone(
+                        pickup_item_event.item_entity,
+                        pickup_item.client_entity,
+                        pickup_item.client_entity_sector,
+                    );
+                }
                 commands.entity(pickup_item_event.item_entity).despawn();
             }
         } else if let Ok(game_client) = query_game_client.get(pickup_item_event.pickup_entity) {

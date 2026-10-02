@@ -4,7 +4,7 @@ use rose_data::QuestTriggerHash;
 use rose_game_common::components::ClanUniqueId;
 
 use crate::game::{
-    components::{Clan, ClanMember, Level},
+    components::{Clan, ClanMember},
     storage::{character::CharacterStorage, clan::ClanStorage},
 };
 
@@ -14,13 +14,13 @@ pub fn startup_clans_system(mut commands: Commands) {
         let mut members = Vec::new();
 
         for member in clan_storage.members {
-            if let Ok(character) = CharacterStorage::try_load(&member.name) {
+            if let Ok((level, job)) = CharacterStorage::try_load_level_and_job(&member.name) {
                 members.push(ClanMember::Offline {
                     name: member.name,
                     position: member.position,
                     contribution: member.contribution,
-                    level: Level::new(character.level.level),
-                    job: character.info.job,
+                    level,
+                    job,
                 });
             }
         }

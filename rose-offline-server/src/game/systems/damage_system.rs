@@ -46,10 +46,7 @@ pub fn damage_system(
     time: Res<Time>,
 ) {
     for damage_event in damage_events.read() {
-        log::info!(
-            "[DAMAGE_SYNC_DEBUG] Received damage event: {:?}",
-            damage_event
-        );
+        // DAMAGE_SYNC_DEBUG disabled on request (was log::info! per damage event).
         
         let (attacker_entity, defender_entity, damage, from_skill) = match *damage_event {
             DamageEvent::Attack { attacker, defender, damage } => (
@@ -93,14 +90,14 @@ pub fn damage_system(
             .map(|client| Some(client.id))
             .unwrap_or(None);
 
-        // DEBUG: Log attacker entity lookup for bot combat sync investigation
-        if attacker_entity_id.is_none() {
-            log::warn!(
-                "[DAMAGE_SYNC_DEBUG] Attacker entity {:?} has no ClientEntity component! Damage event: {:?}",
-                attacker_entity,
-                damage_event
-            );
-        }
+        // DEBUG (disabled on request): attacker without ClientEntity.
+        // if attacker_entity_id.is_none() {
+        //     log::warn!(
+        //         "[DAMAGE_SYNC_DEBUG] Attacker entity {:?} has no ClientEntity component! Damage event: {:?}",
+        //         attacker_entity,
+        //         damage_event
+        //     );
+        // }
 
         if let Ok((
             defender_entity_id,
@@ -114,6 +111,13 @@ pub fn damage_system(
         )) =
             defender_query.get_mut(defender_entity)
         {
+            // Already dead: ignore the hit entirely. This must come before the hit stun, which
+            // would otherwise overwrite the corpse's Die command.
+            if hp.hp == 0 {
+                // DAMAGE_SYNC_DEBUG disabled on request.
+                continue;
+            }
+
             // Apply hit stun: briefly interrupt the target's current action
             if damage.apply_hit_stun {
                 let hit_stun_duration = motion_data_opt
@@ -132,12 +136,6 @@ pub fn damage_system(
                         if let CommandData::Attack { target } = &previous_command {
                             next_command.command = Some(CommandData::Attack { target: *target });
                             next_command.has_sent_server_message = false;
-
-                            log::info!(
-                                "[COMBAT_DEBUG] Preserving interrupted attack intent: defender={:?}, target={:?}",
-                                defender_entity,
-                                target
-                            );
                         }
                     }
                 }
@@ -148,51 +146,20 @@ pub fn damage_system(
                     Some(hit_stun_duration),
                 );
 
-                log::info!(
-                    "[COMBAT_DEBUG] Applied hit stun interrupt: defender={:?}, duration={:?}, previous_command={:?}",
-                    defender_entity,
-                    hit_stun_duration,
-                    previous_command
-                );
-
-            }
-
-            if hp.hp == 0 {
-                log::debug!(
-                    "[DAMAGE_SYNC_DEBUG] Defender {:?} already dead, skipping damage",
-                    defender_entity
-                );
-                continue;
             }
 
             hp.hp = i32::max(hp.hp - damage.amount as i32, 0);
 
-            // DEBUG: Log damage application
-            log::info!(
-                "[DAMAGE_SYNC_DEBUG] Applied {} damage to defender {:?} (attacker: {:?}, hp now: {})",
-                damage.amount,
-                defender_entity,
-                attacker_entity,
-                hp.hp
-            );
+            // DAMAGE_SYNC_DEBUG disabled on request (was per-hit log::info!).
 
             if !matches!(damage_event, DamageEvent::Tagged { .. }) {
                 // Use attacker_id if available, otherwise use0 (for entities without ClientEntity like some bots)
                 let attacker_id = attacker_entity_id.unwrap_or_else(|| {
-                    log::warn!(
-                        "[DAMAGE_SYNC] Attacker entity {:?} has no ClientEntity, using default ID 0",
-                        attacker_entity
-                    );
+                    // Was log::warn! here; silenced with the other DAMAGE_SYNC_DEBUG logs.
                     crate::game::components::ClientEntityId(0)
                 });
-                
-                log::info!(
-                    "[DAMAGE_SYNC_DEBUG] Broadcasting DamageEntity packet: attacker_id={:?}, defender_id={:?}, damage={}, is_killed={}",
-                    attacker_id,
-                    client.id,
-                    damage.amount,
-                    hp.hp == 0
-                );
+
+                // DAMAGE_SYNC_DEBUG disabled on request (was per-packet log::info!).
                 server_messages.send_entity_message(
                     client,
                     ServerMessage::DamageEntity {

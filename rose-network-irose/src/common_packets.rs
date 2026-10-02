@@ -26,6 +26,26 @@ use rose_game_common::{
 };
 use rose_network_common::{PacketError, PacketReader, PacketWriter};
 
+use crate::MAX_PACKET_SIZE;
+
+/// Longest prefix of `text` (cut on a char boundary) that keeps a packet whose
+/// other fields take `other_bytes` within `MAX_PACKET_SIZE`. Over-long chat,
+/// such as LLM bot replies, is shortened instead of producing a packet that
+/// cannot be encoded.
+pub fn truncate_chat_text(text: &str, other_bytes: usize) -> &str {
+    // 6 byte packet header and the text's null terminator.
+    let max_length = MAX_PACKET_SIZE.saturating_sub(6 + other_bytes + 1);
+    if text.len() <= max_length {
+        return text;
+    }
+
+    let mut end = max_length;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
 #[bitfield]
 #[derive(Clone, Copy)]
 pub struct PacketHotbarSlot {

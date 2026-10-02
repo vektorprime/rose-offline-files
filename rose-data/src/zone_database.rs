@@ -5,7 +5,7 @@ use bevy::{
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, num::NonZeroU16, str::FromStr, sync::Arc};
 
-use crate::{NpcConversationId, NpcId, SkyboxId, StringDatabase};
+use crate::{NavGrid, NpcConversationId, NpcId, SkyboxId, StringDatabase};
 
 #[derive(Copy, Clone, Debug, Deserialize, Serialize, Hash, PartialEq, Eq, Reflect)]
 pub struct ZoneId(pub NonZeroU16);
@@ -60,6 +60,10 @@ pub struct ZoneData {
     pub skybox_id: Option<SkyboxId>,
     /// The planet index this zone belongs to (1 = Junon, 2 = Luna, 3 = Eldeon, etc.)
     pub planet: usize,
+    /// Baked 2D walkability grid for bot pathfinding (`None` when the bake
+    /// was skipped or failed, e.g. synthetic ocean zone). Rasterized from
+    /// IFO collision/cnst/deco instances + ZSC collision shapes + ZMS bounds.
+    pub nav_grid: Option<NavGrid>,
 }
 
 impl ZoneData {

@@ -79,7 +79,8 @@ impl LlmEventQueue {
     /// Pushes an event to the queue for the specified bot.
     ///
     /// Events are inserted in priority order (high priority first).
-    /// If the queue exceeds `max_queue_size`, the oldest events are removed.
+    /// If the queue exceeds `max_queue_size`, the oldest events of the lowest
+    /// queued priority are removed.
     ///
     /// # Arguments
     ///
@@ -107,9 +108,18 @@ impl LlmEventQueue {
         
         queue.insert(insert_pos, timestamped_event);
         
-        // Auto-trim old events if queue is full
+        // Auto-trim if the queue is full. The front holds the most important
+        // events, so drop the oldest event of the lowest priority group (the
+        // group at the back) instead.
         while queue.len() > self.max_queue_size {
-            queue.pop_front();
+            let Some(lowest_priority) = queue.back().map(|e| e.priority) else {
+                break;
+            };
+            let oldest_lowest = queue
+                .iter()
+                .position(|e| e.priority == lowest_priority)
+                .unwrap_or(queue.len() - 1);
+            queue.remove(oldest_lowest);
         }
     }
 
@@ -375,6 +385,29 @@ mod tests {
             })
             .collect();
         assert_eq!(messages, vec!["Event 2", "Event 3", "Event 4"]);
+    }
+
+    #[test]
+    fn test_max_queue_size_keeps_high_priority() {
+        let mut queue = LlmEventQueue::with_max_size(2);
+        let bot_id = Uuid::new_v4();
+
+        queue.push_event(bot_id, create_test_event(bot_id, "High"), EventPriority::High, 0.0);
+        queue.push_event(bot_id, create_test_event(bot_id, "Low 1"), EventPriority::Low, 1.0);
+        queue.push_event(bot_id, create_test_event(bot_id, "Low 2"), EventPriority::Low, 2.0);
+
+        let events = queue.get_events(bot_id);
+        let messages: Vec<&str> = events
+            .iter()
+            .filter_map(|e| {
+                if let LlmEvent::PlayerChat { message, .. } = &e.event {
+                    Some(message.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(messages, vec!["High", "Low 2"]);
     }
 
     #[test]

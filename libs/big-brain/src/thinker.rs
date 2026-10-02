@@ -271,11 +271,32 @@ pub fn thinker_component_detach_system(
     }
 }
 
+/// Despawns thinker/scorer/action entities whose actor no longer has a
+/// `ThinkerBuilder`.
+///
+/// Every `Actor` entity is created for an actor that has a `ThinkerBuilder`
+/// (by the attach system, or by a thinker/composite action that already has
+/// that `Actor`), so orphans can only appear after an actor loses its
+/// `ThinkerBuilder` (removal or despawn), which always emits a removal
+/// message. The full scan therefore runs only when such a message arrived,
+/// plus one more run after it: commands queued before this system in the same
+/// `Last` pass (e.g. the attach system spawning a thinker) are applied after
+/// this scan and can still create an orphan, which the follow-up run catches.
 pub fn actor_gone_cleanup(
     mut cmd: Commands,
+    mut removed_builders: RemovedComponents<ThinkerBuilder>,
+    mut rescan_pending: Local<bool>,
     actors: Query<&ThinkerBuilder>,
     q: Query<(Entity, &Actor)>,
 ) {
+    let removed_now = !removed_builders.is_empty();
+    removed_builders.clear();
+    let rescan = removed_now || *rescan_pending;
+    *rescan_pending = removed_now;
+    if !rescan {
+        return;
+    }
+
     for (child, Actor(actor)) in q.iter() {
         if actors.get(*actor).is_err() {
             // Actor is gone. Let's clean up.

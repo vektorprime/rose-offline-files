@@ -158,20 +158,26 @@ impl TitanVfsIndex {
     }
 }
 
+impl TitanVfsIndex {
+    fn find(&self, vfs_path: &VfsPath) -> Option<&[u8]> {
+        let path_str = vfs_path.path().to_string_lossy();
+        let &(offset, size) = self.files.get(&FileNameHash::from(&*path_str).hash)?;
+        Some(&self.mmap[offset as usize..offset as usize + size as usize])
+    }
+}
+
 impl VirtualFilesystemDevice for TitanVfsIndex {
     fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile, anyhow::Error> {
-        let path_str = vfs_path.path().to_string_lossy();
-        let &(offset, size) = self
-            .files
-            .get(&FileNameHash::from(&*path_str).hash)
-            .ok_or_else(|| VfsError::FileNotFound(vfs_path.path().into()))?;
+        self.find(vfs_path)
+            .map(VfsFile::View)
+            .ok_or_else(|| VfsError::FileNotFound(vfs_path.path().into()).into())
+    }
 
-        Ok(VfsFile::View(
-            &self.mmap[offset as usize..offset as usize + size as usize],
-        ))
+    fn try_open_file(&self, vfs_path: &VfsPath) -> Result<Option<VfsFile>, anyhow::Error> {
+        Ok(self.find(vfs_path).map(VfsFile::View))
     }
 
     fn exists(&self, vfs_path: &VfsPath) -> bool {
-        self.open_file(vfs_path).is_ok()
+        self.find(vfs_path).is_some()
     }
 }

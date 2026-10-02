@@ -19,7 +19,7 @@ use rose_game_common::{
 use rose_network_common::{Packet, PacketError, PacketReader, PacketWriter};
 
 use crate::common_packets::{
-    decode_item_slot, encode_item_slot, PacketReadClanMark, PacketReadEntityId,
+    decode_item_slot, encode_item_slot, truncate_chat_text, PacketReadClanMark, PacketReadEntityId,
     PacketReadEquipmentIndex, PacketReadHotbarSlot, PacketReadItemSlot, PacketReadItems,
     PacketReadPartyRules, PacketReadSkillSlot, PacketReadVehiclePartIndex, PacketWriteClanMark,
     PacketWriteEntityId, PacketWriteEquipmentIndex, PacketWriteHotbarSlot, PacketWriteItemSlot,
@@ -67,6 +67,9 @@ pub enum ClientPackets {
     PartyReply = 0x7d1,
     PartyUpdateRules = 0x7d7,
     ClanCommand = 0x7e0,
+    SailInput = 0x7e1,
+    BoardBoat = 0x7e2,
+    DisembarkBoat = 0x7e3,
 }
 
 #[derive(Debug)]
@@ -212,7 +215,7 @@ pub struct PacketClientChat<'a> {
 impl<'a> From<&'a PacketClientChat<'a>> for Packet {
     fn from(packet: &'a PacketClientChat<'a>) -> Self {
         let mut writer = PacketWriter::new(ClientPackets::Chat as u16);
-        writer.write_null_terminated_utf8(packet.text);
+        writer.write_null_terminated_utf8(truncate_chat_text(packet.text, 0));
         writer.into()
     }
 }
@@ -1267,6 +1270,136 @@ impl From<&PacketClientMoveCollision> for Packet {
         writer.write_f32(packet.position.x);
         writer.write_f32(packet.position.y);
         writer.write_i16(packet.position.z as i16);
+        writer.into()
+    }
+}
+
+/// Converts a `-1..1` float input into an `i8` `-127..127` encoding.
+pub fn encode_input_i8(value: f32) -> i8 {
+    (value.clamp(-1.0, 1.0) * 127.0).round() as i8
+}
+
+/// Converts an `i8` `-127..127` encoding back into a `-1..1` float input.
+pub fn decode_input_f32(value: i8) -> f32 {
+    (value as f32 / 127.0).clamp(-1.0, 1.0)
+}
+
+pub struct PacketClientSailInput {
+    pub rudder: i8,
+    pub throttle: i8,
+    pub heading: f32,
+    pub speed: f32,
+    pub sail_trim: f32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl TryFrom<&Packet> for PacketClientSailInput {
+    type Error = PacketError;
+
+    fn try_from(packet: &Packet) -> Result<Self, Self::Error> {
+        if packet.command != ClientPackets::SailInput as u16 {
+            return Err(PacketError::InvalidPacket);
+        }
+
+        let mut reader = PacketReader::from(packet);
+        let rudder = reader.read_i8()?;
+        let throttle = reader.read_i8()?;
+        let heading = reader.read_f32()?;
+        let speed = reader.read_f32()?;
+        let sail_trim = reader.read_f32()?;
+        let x = reader.read_f32()?;
+        let y = reader.read_f32()?;
+        let z = reader.read_f32()?;
+        Ok(PacketClientSailInput {
+            rudder,
+            throttle,
+            heading,
+            speed,
+            sail_trim,
+            x,
+            y,
+            z,
+        })
+    }
+}
+
+impl From<&PacketClientSailInput> for Packet {
+    fn from(packet: &PacketClientSailInput) -> Self {
+        let mut writer = PacketWriter::new(ClientPackets::SailInput as u16);
+        writer.write_i8(packet.rudder);
+        writer.write_i8(packet.throttle);
+        writer.write_f32(packet.heading);
+        writer.write_f32(packet.speed);
+        writer.write_f32(packet.sail_trim);
+        writer.write_f32(packet.x);
+        writer.write_f32(packet.y);
+        writer.write_f32(packet.z);
+        writer.into()
+    }
+}
+
+pub struct PacketClientBoardBoat {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl TryFrom<&Packet> for PacketClientBoardBoat {
+    type Error = PacketError;
+
+    fn try_from(packet: &Packet) -> Result<Self, Self::Error> {
+        if packet.command != ClientPackets::BoardBoat as u16 {
+            return Err(PacketError::InvalidPacket);
+        }
+
+        let mut reader = PacketReader::from(packet);
+        let x = reader.read_f32()?;
+        let y = reader.read_f32()?;
+        let z = reader.read_f32()?;
+        Ok(PacketClientBoardBoat { x, y, z })
+    }
+}
+
+impl From<&PacketClientBoardBoat> for Packet {
+    fn from(packet: &PacketClientBoardBoat) -> Self {
+        let mut writer = PacketWriter::new(ClientPackets::BoardBoat as u16);
+        writer.write_f32(packet.x);
+        writer.write_f32(packet.y);
+        writer.write_f32(packet.z);
+        writer.into()
+    }
+}
+
+pub struct PacketClientDisembarkBoat {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl TryFrom<&Packet> for PacketClientDisembarkBoat {
+    type Error = PacketError;
+
+    fn try_from(packet: &Packet) -> Result<Self, Self::Error> {
+        if packet.command != ClientPackets::DisembarkBoat as u16 {
+            return Err(PacketError::InvalidPacket);
+        }
+
+        let mut reader = PacketReader::from(packet);
+        let x = reader.read_f32()?;
+        let y = reader.read_f32()?;
+        let z = reader.read_f32()?;
+        Ok(PacketClientDisembarkBoat { x, y, z })
+    }
+}
+
+impl From<&PacketClientDisembarkBoat> for Packet {
+    fn from(packet: &PacketClientDisembarkBoat) -> Self {
+        let mut writer = PacketWriter::new(ClientPackets::DisembarkBoat as u16);
+        writer.write_f32(packet.x);
+        writer.write_f32(packet.y);
+        writer.write_f32(packet.z);
         writer.into()
     }
 }

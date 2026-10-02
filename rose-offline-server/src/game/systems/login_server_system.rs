@@ -12,7 +12,7 @@ use crate::game::{
 pub fn login_server_authentication_system(
     mut commands: Commands,
     query: Query<(Entity, &LoginClient), Without<Account>>,
-    login_tokens: Res<LoginTokens>,
+    mut login_tokens: ResMut<LoginTokens>,
     server_list: Res<ServerList>,
 ) {
     query.iter().for_each(|(entity, login_client)| {
@@ -27,6 +27,10 @@ pub fn login_server_authentication_system(
                         .ok();
                 }
                 ClientMessage::LoginRequest { username, password } => {
+                    // A token left behind by a client that never reached the world
+                    // server must not lock the account out forever.
+                    login_tokens.remove_abandoned_tokens();
+
                     let login_result = if login_tokens.find_username_token(&username).is_some() {
                         Err(LoginError::AlreadyLoggedIn)
                     } else {
@@ -82,7 +86,16 @@ pub fn login_server_authentication_system(
 
                     login_client.server_message_tx.send(response).ok();
                 }
-                _ => panic!("Received unexpected client message {:?}", message),
+                _ => {
+                    // Protocol violation (e.g. a channel request before logging
+                    // in): disconnect this client. Dropping LoginClient closes its
+                    // message channel, which ends the connection task.
+                    warn!(
+                        "[LS] Received unexpected client message before login, disconnecting: {:?}",
+                        message
+                    );
+                    commands.entity(entity).remove::<LoginClient>();
+                }
             }
         }
     });

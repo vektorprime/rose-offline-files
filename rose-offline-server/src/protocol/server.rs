@@ -1,16 +1,61 @@
 use bevy::ecs::prelude::Entity;
 use lazy_static::__Deref;
-use log::info;
-use std::sync::Arc;
+use log::{info, warn};
+use std::{sync::Arc, time::Duration};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::oneshot,
 };
 
 use crate::{
-    game::messages::{control::ControlMessage, server::ServerMessage},
+    game::messages::{
+        control::{ClientType, ControlMessage},
+        server::ServerMessage,
+    },
     protocol::{Client, Connection, Protocol},
 };
+
+/// Pause after a failed accept, so a persistent error (e.g. out of file
+/// handles) does not spin the listener.
+const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(100);
+
+/// Sends `RemoveClient` when dropped, so the client entity is always removed
+/// (and a game character saved) however the connection task ends, including a
+/// panic while handling a packet: tokio drops a panicked task's future.
+struct RemoveClientOnDrop {
+    control_message_tx: crossbeam_channel::Sender<ControlMessage>,
+    client_type: ClientType,
+    entity: Entity,
+}
+
+impl Drop for RemoveClientOnDrop {
+    fn drop(&mut self) {
+        self.control_message_tx
+            .send(ControlMessage::RemoveClient {
+                client_type: self.client_type,
+                entity: self.entity,
+            })
+            .ok();
+    }
+}
+
+/// Accepts the next connection, logging and retrying on accept errors instead
+/// of panicking the listener task.
+async fn accept_connection(listener: &TcpListener, server_name: &str) -> TcpStream {
+    loop {
+        match listener.accept().await {
+            Ok((socket, _)) => return socket,
+            Err(error) => {
+                warn!("{} failed to accept connection: {}", server_name, error);
+                // Sleep on the blocking pool: the backoff must not depend on
+                // tokio's optional timer feature.
+                tokio::task::spawn_blocking(|| std::thread::sleep(ACCEPT_ERROR_BACKOFF))
+                    .await
+                    .ok();
+            }
+        }
+    }
+}
 
 async fn run_connection(
     stream: TcpStream,
@@ -30,6 +75,11 @@ async fn run_connection(
     })?;
 
     let entity = response_rx.await?;
+    let remove_client = RemoveClientOnDrop {
+        control_message_tx,
+        client_type: protocol.client_type,
+        entity,
+    };
     let mut client = Client {
         entity,
         connection: Connection::new(stream, protocol.packet_codec.deref()),
@@ -38,12 +88,7 @@ async fn run_connection(
     };
     let result = (protocol.create_server)().run_client(&mut client).await;
 
-    control_message_tx
-        .send(ControlMessage::RemoveClient {
-            client_type: protocol.client_type,
-            entity: client.entity,
-        })
-        .ok();
+    drop(remove_client);
     client.connection.shutdown().await;
     result
 }
@@ -72,7 +117,7 @@ impl LoginServer {
             tokio::select! {
                 _ = async {
                     loop {
-                        let (socket, _) = self.listener.accept().await.unwrap();
+                        let socket = accept_connection(&self.listener, "Login Server").await;
                         let protocol = self.protocol.clone();
                         let control_message_tx = self.control_message_tx.clone();
                         tokio::spawn(async move {
@@ -133,7 +178,7 @@ impl WorldServer {
             tokio::select! {
                 _ = async {
                     loop {
-                        let (socket, _) = self.listener.accept().await.unwrap();
+                        let socket = accept_connection(&self.listener, "World Server").await;
                         let protocol = self.protocol.clone();
                         let control_message_tx = self.control_message_tx.clone();
                         tokio::spawn(async move {
@@ -202,7 +247,7 @@ impl GameServer {
             tokio::select! {
                 _ = async {
                     loop {
-                        let (socket, _) = self.listener.accept().await.unwrap();
+                        let socket = accept_connection(&self.listener, "Game Server").await;
                         let protocol = self.protocol.clone();
                         let control_message_tx = self.control_message_tx.clone();
                         tokio::spawn(async move {

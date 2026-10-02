@@ -5,7 +5,7 @@ use bevy::{
     app::ScheduleRunnerPlugin,
     ecs::schedule::IntoScheduleConfigs,
     prelude::{
-        App, ApplyDeferred, Last, PluginGroup, PostUpdate, PreUpdate, Startup,
+        on_message, App, ApplyDeferred, Last, PluginGroup, PostUpdate, PreUpdate, Startup,
         Update,
     },
     MinimalPlugins,
@@ -20,7 +20,7 @@ use crate::game::llm::{
 };
 use crate::game::{
     api::LlmBotManager,
-    bots::{BotPlugin, process_llm_bot_creations_system},
+    bots::{names::BotNames, bot_chase_steering_system, bot_navigation_system, bot_separation_system, BotPlugin, process_llm_bot_creations_system},
     events::{
         BankEvent, ChatCommandEvent, ChatMessageEvent, ClanEvent, DamageEvent, EquipmentEvent, ItemLifeEvent,
         NpcStoreEvent, PartyEvent, PartyMemberEvent, PersonalStoreEvent, PickupItemEvent,
@@ -29,8 +29,9 @@ use crate::game::{
     },
     messages::control::ControlMessage,
     resources::{
-        BotList, ClientEntityList, ControlChannel, EconomyVariables, GameConfig, GameData, LoginTokens, ServerList,
-        ServerMessages, WorldRates, WorldTime, WorldVariables, ZoneList,
+        BotList, ClientEntityList, ControlChannel, EconomyVariables, GameConfig, GameData,
+        LoginTokens, ServerList, ServerMessages, ServerWindSettings, ServerWindState, WorldRates,
+        WorldTime, WorldVariables, ZoneList,
     },
     systems::{
         ability_values_changed_system, ability_values_update_character_system,
@@ -39,16 +40,17 @@ use crate::game::{
         driving_time_system, equipment_event_system, experience_points_system, expire_time_system,
         game_server_authentication_system, game_server_join_system, game_server_main_system,
         item_life_system, llm_buddy_bot_auto_accept_party_system, llm_buddy_chat_capture_system, llm_buddy_follow_system,
-        llm_buddy_status_update_system, llm_bot_teleport_to_player_on_login_system, login_server_authentication_system, login_server_system,
-        monster_spawn_system, npc_ai_system, npc_store_system, party_member_event_system,
-        party_member_update_info_system, party_system, party_update_average_level_system,
-        passive_recovery_system, personal_store_system, pickup_item_system, process_llm_bot_commands_system,
+        llm_bot_teleport_to_player_on_login_system, login_server_authentication_system, login_server_system,
+        delayed_spawn_system, monster_spawn_system, npc_ai_system, npc_store_system,
+        party_member_event_system, party_member_update_info_system, party_system,
+        party_update_average_level_system, personal_store_system, pickup_item_system,
+        process_llm_bot_commands_system,
         quest_system, restore_llm_buddy_bots_system, revive_event_system, reward_item_system, 
-        save_system, server_messages_system, skill_effect_system, startup_bots_system, startup_clans_system,
+        sail_state_broadcast_system, save_system, server_messages_system,
+        server_wind_update_system, skill_effect_system, startup_bots_system, startup_clans_system,
         startup_zones_system, status_effect_system, update_character_motion_data_system,
         update_npc_motion_data_system, update_position_system, use_ammo_system, use_item_system, 
-        weight_system, world_server_authentication_system, world_server_system, world_time_system,
-        position_reconciliation_system, add_position_snapshot_timer_system, PositionReconciliationConfig,
+        weight_system, wind_broadcast_system, world_server_authentication_system, world_server_system, world_time_system,
         LlmBotCommandReceiver, LlmBotManagerResource,
     },
 };
@@ -82,6 +84,7 @@ impl GameWorld {
         app.add_plugins(BotPlugin);
 
         app.insert_resource(BotList::new());
+        app.insert_resource(BotNames::default());
         app.insert_resource(ClientEntityList::new(&game_data.zones));
         app.insert_resource(ControlChannel::new(self.control_rx.clone()));
         app.insert_resource(LoginTokens::new());
@@ -94,7 +97,6 @@ impl GameWorld {
         app.insert_resource(ZoneList::new());
         app.insert_resource(game_config);
         app.insert_resource(game_data);
-        app.insert_resource(PositionReconciliationConfig::default());
 
         // Initialize LLM Bot Manager resources if available
         let command_sender = if let Some(manager) = &self.llm_bot_manager {
@@ -182,6 +184,9 @@ impl GameWorld {
             .add_message::<UseAmmoEvent>()
             .add_message::<UseItemEvent>();
 
+        app.init_resource::<ServerWindState>()
+            .init_resource::<ServerWindSettings>();
+
         /*
         Stage order:
         - CoreSet::First
@@ -208,29 +213,42 @@ impl GameWorld {
                     game_server_authentication_system,
                     game_server_join_system,
                     (game_server_main_system, revive_event_system).chain(),
-                    chat_commands_system,
+                    chat_commands_system.run_if(on_message::<ChatCommandEvent>),
+                    server_wind_update_system,
+                    wind_broadcast_system,
                     monster_spawn_system,
-                    npc_ai_system,
+                    // Monsters an NPC summons on death (AI SpawnNpc while dead) are queued as
+                    // DelayedSpawn entities, spawned here once their delay has passed.
+                    (npc_ai_system, delayed_spawn_system),
                     expire_time_system,
                     status_effect_system,
-                    passive_recovery_system,
                     driving_time_system,
-                    // LLM Buddy Bot command processing
-                    process_llm_bot_commands_system,
-                    process_llm_bot_creations_system,
+                    // LLM Buddy Bot command processing (only when there is work queued)
+                    process_llm_bot_commands_system
+                        .run_if(crate::game::systems::llm_buddy_bot_system::llm_bot_commands_pending),
+                    process_llm_bot_creations_system
+                        .run_if(crate::game::systems::llm_buddy_bot_system::llm_bot_creations_pending),
                 ),
                 ApplyDeferred,
-                (
-                    (
                         (
-                            update_character_motion_data_system,
-                            update_npc_motion_data_system,
-                            update_position_system,
-                        ),
-                        command_system,
-                        (use_ammo_system, pickup_item_system),
-                    )
-                        .chain(),
+                            (
+                                (
+                                    update_character_motion_data_system,
+                                    update_npc_motion_data_system,
+                                    update_position_system,
+                                ),
+                                // Bot navigation rewrites far travel orders into nav-grid
+                                // legs before command_system broadcasts them; separation
+                                // pushes stacked movers apart after positions update.
+                                bot_navigation_system,
+                                command_system,
+                                // Chase steering rewrites live Command::Move legs
+                                // (attack chase etc.) set by command_system above.
+                                bot_chase_steering_system,
+                                bot_separation_system,
+                                (use_ammo_system, pickup_item_system),
+                            )
+                                .chain(),
                     (
                         party_member_event_system,
                         party_system,
@@ -240,15 +258,11 @@ impl GameWorld {
                     )
                         .chain(),
                     clan_system,
-                    // Position reconciliation - validates and corrects client positions
-                    position_reconciliation_system,
+                    sail_state_broadcast_system,
                 ),
             )
                 .chain(),
         );
-
-        // Add position snapshot timer to new GameClient entities
-        app.add_systems(PreUpdate, add_position_snapshot_timer_system);
 
         app.add_systems(
             Update,
@@ -256,7 +270,7 @@ impl GameWorld {
                 bank_system,
                 personal_store_system,
                 npc_store_system,
-                quest_system,
+                quest_system.run_if(on_message::<QuestTriggerEvent>),
                 use_item_system,
                 reward_item_system,
                 damage_system.before(item_life_system),
@@ -317,8 +331,6 @@ impl GameWorld {
                 ability_values_update_character_system.before(ability_values_changed_system),
                 ability_values_update_npc_system.before(ability_values_changed_system),
                 ability_values_changed_system,
-                // LLM Buddy Bot status update
-                llm_buddy_status_update_system,
                 server_messages_system,
                 save_system,
             ),

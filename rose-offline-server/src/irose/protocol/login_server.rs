@@ -73,7 +73,7 @@ impl LoginServer {
             ServerMessage::ConnectionRequestSuccess { packet_sequence_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketConnectionReply {
+                    .write_packet_buffered(Packet::from(&PacketConnectionReply {
                         status: ConnectionResult::Accepted,
                         packet_sequence_id,
                     }))
@@ -82,7 +82,7 @@ impl LoginServer {
             ServerMessage::ConnectionRequestError { .. } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketConnectionReply {
+                    .write_packet_buffered(Packet::from(&PacketConnectionReply {
                         status: ConnectionResult::Disconnect,
                         packet_sequence_id: 0u32,
                     }))
@@ -91,7 +91,7 @@ impl LoginServer {
             ServerMessage::LoginSuccess { server_list } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerLoginReply {
+                    .write_packet_buffered(Packet::from(&PacketServerLoginReply {
                         result: LoginResult::Ok,
                         rights: 0x800,
                         pay_type: 0xff,
@@ -114,7 +114,7 @@ impl LoginServer {
                         &PacketServerLoginReply::with_error_result(LoginResult::InvalidPassword),
                     ),
                 };
-                client.connection.write_packet(packet).await?;
+                client.connection.write_packet_buffered(packet).await?;
             }
             ServerMessage::ChannelList {
                 server_id,
@@ -133,7 +133,7 @@ impl LoginServer {
 
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerChannelList {
+                    .write_packet_buffered(Packet::from(&PacketServerChannelList {
                         server_id,
                         channels: channel_list,
                     }))
@@ -143,7 +143,7 @@ impl LoginServer {
                 let ChannelListError::InvalidServerId { server_id } = error;
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerChannelList {
+                    .write_packet_buffered(Packet::from(&PacketServerChannelList {
                         server_id,
                         channels: Vec::new(),
                     }))
@@ -157,7 +157,7 @@ impl LoginServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerSelectServer {
+                    .write_packet_buffered(Packet::from(&PacketServerSelectServer {
                         result: SelectServerResult::Ok,
                         login_token,
                         packet_codec_seed,
@@ -175,9 +175,14 @@ impl LoginServer {
                         &PacketServerSelectServer::with_result(SelectServerResult::Failed),
                     ),
                 };
-                client.connection.write_packet(packet).await?;
+                client.connection.write_packet_buffered(packet).await?;
             }
-            _ => panic!("Received unexpected server message for login server"),
+            // Disconnect instead of panicking the connection task.
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Received unexpected server message for login server"
+                ))
+            }
         }
 
         Ok(())

@@ -41,6 +41,61 @@ pub struct MemberQuery<'w> {
     game_client: Option<&'w GameClient>,
 }
 
+fn save_clan(clan: &Clan, query_member: &Query<MemberQuery>) {
+    let mut members = Vec::with_capacity(clan.members.len());
+    for member in clan.members.iter() {
+        match *member {
+            ClanMember::Online {
+                entity,
+                position,
+                contribution,
+            } => {
+                let Ok(online_member) = query_member.get(entity) else {
+                    // Saving without this member would remove them from the clan file
+                    log::error!(
+                        "Failed to save clan {} as online member entity {:?} was not found",
+                        &clan.name,
+                        entity
+                    );
+                    return;
+                };
+                members.push(ClanStorageMember {
+                    name: online_member.character_info.name.clone(),
+                    position,
+                    contribution,
+                });
+            }
+            ClanMember::Offline {
+                ref name,
+                position,
+                contribution,
+                ..
+            } => {
+                members.push(ClanStorageMember {
+                    name: name.clone(),
+                    position,
+                    contribution,
+                });
+            }
+        }
+    }
+
+    let clan_storage = ClanStorage {
+        name: clan.name.clone(),
+        description: clan.description.clone(),
+        mark: clan.mark,
+        money: clan.money,
+        points: clan.points,
+        level: clan.level,
+        members,
+        skills: clan.skills.clone(),
+    };
+    match clan_storage.save() {
+        Ok(_) => log::info!("Saved clan {}", &clan.name),
+        Err(error) => log::error!("Failed to save clan {} with error {:?}", &clan.name, error),
+    }
+}
+
 fn send_update_clan_info(clan: &Clan, query_member: &Query<MemberQuery>) {
     for clan_member in clan.members.iter() {
         let &ClanMember::Online {
@@ -78,6 +133,14 @@ pub fn clan_system(
     mut query_clans: Query<&mut Clan>,
     mut server_messages: ResMut<ServerMessages>,
 ) {
+    // Clans whose stored data changed, saved once after all events have been processed
+    let mut changed_clans: Vec<Entity> = Vec::new();
+    let mut mark_changed = |clan_entity: Entity| {
+        if !changed_clans.contains(&clan_entity) {
+            changed_clans.push(clan_entity);
+        }
+    };
+
     for event in clan_events.read() {
         match event {
             ClanEvent::Create {
@@ -312,6 +375,7 @@ pub fn clan_system(
                     {
                         clan.level = ClanLevel(level);
                         send_update_clan_info(&clan, &query_member);
+                        mark_changed(clan_entity);
                     }
                 }
             }
@@ -319,6 +383,7 @@ pub fn clan_system(
                 if let Ok(mut clan) = query_clans.get_mut(clan_entity) {
                     clan.level = level;
                     send_update_clan_info(&clan, &query_member);
+                    mark_changed(clan_entity);
                 }
             }
             &ClanEvent::AddMoney { clan_entity, money } => {
@@ -326,6 +391,7 @@ pub fn clan_system(
                     if let Some(money) = clan.money.0.checked_add(money) {
                         clan.money = Money(money);
                         send_update_clan_info(&clan, &query_member);
+                        mark_changed(clan_entity);
                     }
                 }
             }
@@ -333,6 +399,7 @@ pub fn clan_system(
                 if let Ok(mut clan) = query_clans.get_mut(clan_entity) {
                     clan.money = money;
                     send_update_clan_info(&clan, &query_member);
+                    mark_changed(clan_entity);
                 }
             }
             &ClanEvent::AddPoints {
@@ -343,6 +410,7 @@ pub fn clan_system(
                     if let Some(points) = clan.points.0.checked_add_signed(points) {
                         clan.points = ClanPoints(points);
                         send_update_clan_info(&clan, &query_member);
+                        mark_changed(clan_entity);
                     }
                 }
             }
@@ -353,6 +421,7 @@ pub fn clan_system(
                 if let Ok(mut clan) = query_clans.get_mut(clan_entity) {
                     clan.points = points;
                     send_update_clan_info(&clan, &query_member);
+                    mark_changed(clan_entity);
                 }
             }
             &ClanEvent::AddSkill {
@@ -363,6 +432,7 @@ pub fn clan_system(
                     if !clan.skills.iter().any(|id| *id == skill_id) {
                         clan.skills.push(skill_id);
                         send_update_clan_info(&clan, &query_member);
+                        mark_changed(clan_entity);
                     }
                 }
             }
@@ -374,9 +444,17 @@ pub fn clan_system(
                     if clan.skills.iter().any(|id| *id == skill_id) {
                         clan.skills.retain(|id| *id != skill_id);
                         send_update_clan_info(&clan, &query_member);
+                        mark_changed(clan_entity);
                     }
                 }
             }
+        }
+    }
+
+    // Saved after the loop so members who disconnected this frame are already offline
+    for clan_entity in changed_clans {
+        if let Ok(clan) = query_clans.get(clan_entity) {
+            save_clan(clan, &query_member);
         }
     }
 

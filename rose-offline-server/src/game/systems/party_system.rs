@@ -776,7 +776,9 @@ fn handle_party_member_update_info(
         send_message_to_members(
             party_member_info_query,
             &party.members,
-            ServerMessage::PartyMemberUpdateInfo { member_info },
+            ServerMessage::PartyMemberUpdateInfo {
+                member_info: Box::new(member_info),
+            },
             Some(member_entity),
         );
     }
@@ -932,12 +934,16 @@ pub fn party_system(
 pub fn party_member_update_info_system(
     party_query: Query<&Party>,
     party_member_info_query: Query<PartyMemberInfoQuery>,
+    // HealthPoints too: the info carries the member's current HP, and HP changes
+    // (damage, heals, potions) used to reach party members only when something
+    // else happened to mark AbilityValues changed.
     party_member_info_changed_query: Query<
         (Entity, &PartyMembership),
         Or::<(
             Changed<AbilityValues>,
             Changed<ClientEntity>,
             Changed<StatusEffects>,
+            Changed<HealthPoints>,
         )>,
     >,
 ) {
@@ -950,7 +956,9 @@ pub fn party_member_update_info_system(
                     send_message_to_members(
                         &party_member_info_query,
                         &party.members,
-                        ServerMessage::PartyMemberUpdateInfo { member_info },
+                        ServerMessage::PartyMemberUpdateInfo {
+                            member_info: Box::new(member_info),
+                        },
                         Some(member_entity),
                     );
                 }
@@ -977,7 +985,11 @@ pub fn party_update_average_level_system(
         }
 
         if num_online != 0 {
-            party.average_member_level = total_levels as i32 / num_online;
+            // Only write when it changes, so Party is not marked changed every tick
+            let average_member_level = total_levels as i32 / num_online;
+            if party.average_member_level != average_member_level {
+                party.average_member_level = average_member_level;
+            }
         }
     }
 }

@@ -40,39 +40,20 @@ pub fn control_server_system(
                 entity,
             } => match client_type {
                 ClientType::Login => {
-                    for login_token in login_tokens.tokens.iter_mut() {
-                        if login_token.login_client == Some(entity) {
-                            login_token.login_client = None;
-                        }
-                    }
+                    // Tokens stay until claimed by the world server or abandoned,
+                    // see LoginTokens::remove_abandoned_tokens.
+                    login_tokens.remove_login_client(entity);
 
                     commands.entity(entity).despawn();
                 }
                 ClientType::World => {
-                    for (index, login_token) in login_tokens.tokens.iter_mut().enumerate() {
-                        if login_token.world_client == Some(entity) {
-                            login_token.world_client = None;
-                        }
-
-                        if login_token.game_client.is_none() && login_token.world_client.is_none() {
-                            login_tokens.tokens.remove(index);
-                            break;
-                        }
-                    }
+                    // Only this client's own token may be cleared / removed.
+                    login_tokens.remove_world_client(entity);
 
                     commands.entity(entity).despawn();
                 }
                 ClientType::Game => {
-                    for (index, login_token) in login_tokens.tokens.iter_mut().enumerate() {
-                        if login_token.game_client == Some(entity) {
-                            login_token.game_client = None;
-                        }
-
-                        if login_token.game_client.is_none() && login_token.world_client.is_none() {
-                            login_tokens.tokens.remove(index);
-                            break;
-                        }
-                    }
+                    login_tokens.remove_game_client(entity);
 
                     // Let the save system handle despawning the entity
                     save_events.write(SaveEvent::Character {

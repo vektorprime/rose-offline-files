@@ -24,6 +24,7 @@ use crate::game::{
         bot_build_artisan, bot_build_bourgeois, bot_build_champion, bot_build_cleric,
         bot_build_knight, bot_build_mage, bot_build_raider, bot_build_scout,
         bot_create_random_build, bot_create_with_build, bot_snowball_fight, bot_thinker,
+        names::BotNames, BotChatMemory, BotRole,
     },
     bundles::{
         ability_values_add_value, ability_values_set_value, client_entity_teleport_zone,
@@ -50,6 +51,7 @@ use crate::game::{
 pub struct ChatCommandParams<'w, 's> {
     commands: Commands<'w, 's>,
     bot_list: ResMut<'w, BotList>,
+    bot_names: ResMut<'w, BotNames>,
     client_entity_list: ResMut<'w, ClientEntityList>,
     game_data: Res<'w, GameData>,
     clan_events: MessageWriter<'w, ClanEvent>,
@@ -381,6 +383,8 @@ fn create_bot_entity(
         .spawn((
             bot_build,
             bot_thinker(),
+            BotRole::Fighter,
+            BotChatMemory::default(),
             CharacterBundle {
                 ability_values,
                 basic_stats: bot_data.basic_stats,
@@ -469,9 +473,10 @@ fn create_random_bot_entities(
         bot_position.position.x += spawn_radius * angle.cos();
         bot_position.position.y += spawn_radius * angle.sin();
 
+        let bot_name = chat_command_params.bot_names.next_unique_name(&mut rng);
         if let Some(bot_entity) = create_bot_entity(
             chat_command_params,
-            format!("Friend {}", chat_command_params.bot_list.len()),
+            bot_name,
             bot_position,
             rng.gen_range::<i32, _>(bot_level_range.clone()) as u32,
         ) {
@@ -754,6 +759,9 @@ fn handle_chat_command(
                 .game_data
                 .items
                 .iter_items(item_type)
+                // Item numbers above 1023 don't fit the protocol's 10-bit
+                // item_number field and would panic the packet writer.
+                .filter(|item| item.item_number <= 1023)
                 .map(|item| {
                     (
                         item,

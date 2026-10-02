@@ -8,9 +8,31 @@ use axum::{
 use serde::Deserialize;
 use uuid::Uuid;
 
-use super::channels::LlmBotCommand;
+use super::channels::{response_channel, LlmBotCommand};
 use super::models::*;
 use super::state::ApiState;
+
+/// How long a handler waits for the game thread to answer a query.
+const GAME_REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Why a game-thread query got no answer.
+#[derive(Debug)]
+enum GameReplyError {
+    Timeout,
+    Disconnected,
+}
+
+/// Awaits the game thread's reply without blocking a runtime worker thread
+/// (the previous blocking `recv_timeout` held a worker for up to 5 s).
+async fn await_game_reply<T>(
+    response_rx: tokio::sync::oneshot::Receiver<T>,
+) -> Result<T, GameReplyError> {
+    match tokio::time::timeout(GAME_REPLY_TIMEOUT, response_rx).await {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(_)) => Err(GameReplyError::Disconnected),
+        Err(_) => Err(GameReplyError::Timeout),
+    }
+}
 
 /// Query parameters for nearby entities endpoint
 #[derive(Debug, Deserialize)]
@@ -106,7 +128,7 @@ pub async fn delete_bot(
     }
 
     // Create response channel for confirmation from game thread
-    let (response_tx, response_rx) = crossbeam_channel::bounded(1);
+    let (response_tx, response_rx) = response_channel();
     log::info!("delete_bot: created response channel for bot {}", bot_id);
     
     // Send delete command to game thread with response channel
@@ -125,7 +147,7 @@ pub async fn delete_bot(
 
     // Wait for confirmation from game thread (with timeout)
     log::info!("delete_bot: waiting for confirmation from game thread for bot {}", bot_id);
-    match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+    match await_game_reply(response_rx).await {
         Ok(response) => {
             if response.success {
                 log::info!("delete_bot: successfully deleted bot {}", bot_id);
@@ -141,14 +163,14 @@ pub async fn delete_bot(
                 ))
             }
         }
-        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+        Err(GameReplyError::Timeout) => {
             log::error!("delete_bot: timeout waiting for confirmation for bot {}", bot_id);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new("Timeout waiting for deletion confirmation", 500)),
             ))
         }
-        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+        Err(GameReplyError::Disconnected) => {
             log::error!("delete_bot: response channel disconnected for bot {}", bot_id);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -165,7 +187,7 @@ pub async fn list_bots(
     log::info!("list_bots called");
     
     // Create response channel for bot list from game thread
-    let (response_tx, response_rx) = crossbeam_channel::bounded(1);
+    let (response_tx, response_rx) = response_channel();
     
     let command = LlmBotCommand::GetBotList { response_tx };
     state
@@ -178,7 +200,7 @@ pub async fn list_bots(
         })?;
 
     // Wait for response from game thread (with timeout)
-    match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+    match await_game_reply(response_rx).await {
         Ok(response) => {
             if response.success {
                 // Convert BotSummaryData to BotSummary
@@ -203,13 +225,13 @@ pub async fn list_bots(
                 ))
             }
         }
-        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+        Err(GameReplyError::Timeout) => {
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new("Timeout waiting for bot list", 500)),
             ))
         }
-        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+        Err(GameReplyError::Disconnected) => {
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new("Game thread disconnected", 500)),
@@ -234,7 +256,7 @@ pub async fn get_bot_status(
     let class = bot_info.as_ref().map(|i| i.class.clone()).unwrap_or_else(|| "Knight".to_string());
 
     // Create response channel for bot list from game thread (which includes status)
-    let (response_tx, response_rx) = crossbeam_channel::bounded(1);
+    let (response_tx, response_rx) = response_channel();
     
     let command = LlmBotCommand::GetBotList { response_tx };
     state
@@ -247,7 +269,7 @@ pub async fn get_bot_status(
         })?;
 
     // Wait for response from game thread (with timeout)
-    match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+    match await_game_reply(response_rx).await {
         Ok(response) => {
             if response.success {
                 // Find the specific bot in the list
@@ -282,13 +304,13 @@ pub async fn get_bot_status(
                 ))
             }
         }
-        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+        Err(GameReplyError::Timeout) => {
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new("Timeout waiting for bot status", 500)),
             ))
         }
-        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+        Err(GameReplyError::Disconnected) => {
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new("Game thread disconnected", 500)),
@@ -506,7 +528,7 @@ pub async fn get_chat_history(
     }
 
     // Create response channel for chat history from game thread
-    let (response_tx, response_rx) = crossbeam_channel::bounded(1);
+    let (response_tx, response_rx) = response_channel();
     
     let command = LlmBotCommand::GetChatHistory { bot_id, response_tx };
     state
@@ -519,7 +541,7 @@ pub async fn get_chat_history(
         })?;
 
     // Wait for response from game thread (with timeout)
-    match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+    match await_game_reply(response_rx).await {
         Ok(response) => {
             if response.success {
                 Ok(Json(ApiResponse::success(ChatHistoryResponse {
@@ -535,13 +557,13 @@ pub async fn get_chat_history(
                 ))
             }
         }
-        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+        Err(GameReplyError::Timeout) => {
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new("Timeout waiting for chat history", 500)),
             ))
         }
-        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+        Err(GameReplyError::Disconnected) => {
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new("Game thread disconnected", 500)),
@@ -564,7 +586,7 @@ pub async fn get_nearby_entities(
     }
 
     // Create response channel for bot context from game thread (which includes nearby entities)
-    let (response_tx, response_rx) = crossbeam_channel::bounded(1);
+    let (response_tx, response_rx) = response_channel();
     
     let command = LlmBotCommand::GetBotContext { bot_id, response_tx };
     state
@@ -577,7 +599,7 @@ pub async fn get_nearby_entities(
         })?;
 
     // Wait for response from game thread (with timeout)
-    match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+    match await_game_reply(response_rx).await {
         Ok(response) => {
             if response.success {
                 Ok(Json(ApiResponse::success(NearbyEntitiesResponse {
@@ -593,13 +615,13 @@ pub async fn get_nearby_entities(
                 ))
             }
         }
-        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+        Err(GameReplyError::Timeout) => {
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new("Timeout waiting for nearby entities", 500)),
             ))
         }
-        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+        Err(GameReplyError::Disconnected) => {
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new("Game thread disconnected", 500)),
@@ -621,7 +643,7 @@ pub async fn get_bot_skills(
     }
 
     // Create response channel for skills from game thread
-    let (response_tx, response_rx) = crossbeam_channel::bounded(1);
+    let (response_tx, response_rx) = response_channel();
     
     let command = LlmBotCommand::GetBotSkills { bot_id, response_tx };
     state
@@ -634,7 +656,7 @@ pub async fn get_bot_skills(
         })?;
 
     // Wait for response from game thread (with timeout)
-    match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+    match await_game_reply(response_rx).await {
         Ok(response) => {
             if response.success {
                 Ok(Json(ApiResponse::success(BotSkillsResponse {
@@ -650,13 +672,13 @@ pub async fn get_bot_skills(
                 ))
             }
         }
-        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+        Err(GameReplyError::Timeout) => {
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new("Timeout waiting for skills", 500)),
             ))
         }
-        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+        Err(GameReplyError::Disconnected) => {
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new("Game thread disconnected", 500)),
@@ -677,7 +699,7 @@ pub async fn get_bot_inventory(
         ));
     }
 
-    let (response_tx, response_rx) = crossbeam_channel::bounded(1);
+    let (response_tx, response_rx) = response_channel();
     let command = LlmBotCommand::GetBotInventory { bot_id, response_tx };
     state
         .send_command(command)
@@ -688,7 +710,7 @@ pub async fn get_bot_inventory(
             )
         })?;
 
-    match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+    match await_game_reply(response_rx).await {
         Ok(response) => {
             if response.success {
                 Ok(Json(ApiResponse::success(BotInventoryResponse {
@@ -723,7 +745,7 @@ pub async fn get_player_status(
         ));
     }
 
-    let (response_tx, response_rx) = crossbeam_channel::bounded(1);
+    let (response_tx, response_rx) = response_channel();
     let command = LlmBotCommand::GetPlayerStatus { bot_id, response_tx };
     state
         .send_command(command)
@@ -734,7 +756,7 @@ pub async fn get_player_status(
             )
         })?;
 
-    match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+    match await_game_reply(response_rx).await {
         Ok(response) => {
             if response.success {
                 if let Some(status) = response.status {
@@ -799,7 +821,7 @@ pub async fn get_zone_info(
         ));
     }
 
-    let (response_tx, response_rx) = crossbeam_channel::bounded(1);
+    let (response_tx, response_rx) = response_channel();
     let command = LlmBotCommand::GetZoneInfo { bot_id, response_tx };
     state
         .send_command(command)
@@ -810,7 +832,7 @@ pub async fn get_zone_info(
             )
         })?;
 
-    match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+    match await_game_reply(response_rx).await {
         Ok(response) => {
             if response.success {
                 Ok(Json(ApiResponse::success(ZoneInfoResponse {
@@ -968,7 +990,7 @@ pub async fn get_bot_context(
     let class = bot_info.as_ref().map(|i| i.class.clone()).unwrap_or_else(|| "Knight".to_string());
 
     // Query the game world for nearby threats and items
-    let (response_tx, response_rx) = crossbeam_channel::bounded(1);
+    let (response_tx, response_rx) = response_channel();
     let command = LlmBotCommand::GetBotContext { bot_id, response_tx };
     
     state
@@ -981,7 +1003,7 @@ pub async fn get_bot_context(
         })?;
 
     // Wait for response from game thread (with timeout)
-    let entities: Vec<NearbyEntity> = match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+    let entities: Vec<NearbyEntity> = match await_game_reply(response_rx).await {
         Ok(response) => {
             if response.success {
                 response.entities

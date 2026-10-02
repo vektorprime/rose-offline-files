@@ -51,6 +51,13 @@ fn read_object(reader: &mut RoseFileReader) -> anyhow::Result<IfoObject> {
     })
 }
 
+/// Capacity to reserve for `count` records. Every record takes at least one byte, so
+/// a valid count never exceeds the bytes left; a corrupt count then fails on the
+/// reads instead of aborting on a huge allocation.
+fn counted_capacity(count: usize, reader: &RoseFileReader) -> usize {
+    count.min(reader.remaining())
+}
+
 pub struct IfoMonsterSpawn {
     pub id: u32,
     pub count: u32,
@@ -169,7 +176,7 @@ impl RoseFile for IfoFile {
                 Some(BlockType::AnimatedObject) => {
                     if !read_options.skip_animated_objects {
                         let object_count = reader.read_u32()? as usize;
-                        animated_objects.reserve_exact(object_count);
+                        animated_objects.reserve_exact(counted_capacity(object_count, &reader));
 
                         for _ in 0..object_count {
                             animated_objects.push(read_object(&mut reader)?);
@@ -179,7 +186,7 @@ impl RoseFile for IfoFile {
                 Some(BlockType::CollisionObject) => {
                     if !read_options.skip_collision_objects {
                         let object_count = reader.read_u32()? as usize;
-                        collision_objects.reserve_exact(object_count);
+                        collision_objects.reserve_exact(counted_capacity(object_count, &reader));
 
                         for _ in 0..object_count {
                             let object = read_object(&mut reader)?;
@@ -190,7 +197,7 @@ impl RoseFile for IfoFile {
                 Some(BlockType::CnstObject) => {
                     if !read_options.skip_cnst_objects {
                         let object_count = reader.read_u32()? as usize;
-                        cnst_objects.reserve_exact(object_count);
+                        cnst_objects.reserve_exact(counted_capacity(object_count, &reader));
 
                         for _ in 0..object_count {
                             cnst_objects.push(read_object(&mut reader)?);
@@ -200,7 +207,7 @@ impl RoseFile for IfoFile {
                 Some(BlockType::DecoObject) => {
                     if !read_options.skip_deco_objects {
                         let object_count = reader.read_u32()? as usize;
-                        cnst_objects.reserve_exact(object_count);
+                        deco_objects.reserve_exact(counted_capacity(object_count, &reader));
 
                         for _ in 0..object_count {
                             deco_objects.push(read_object(&mut reader)?);
@@ -210,7 +217,7 @@ impl RoseFile for IfoFile {
                 Some(BlockType::EventObject) => {
                     if !read_options.skip_event_objects {
                         let object_count = reader.read_u32()? as usize;
-                        event_objects.reserve_exact(object_count);
+                        event_objects.reserve_exact(counted_capacity(object_count, &reader));
 
                         for _ in 0..object_count {
                             let object = read_object(&mut reader)?;
@@ -227,7 +234,7 @@ impl RoseFile for IfoFile {
                 Some(BlockType::Npc) => {
                     if !read_options.skip_npcs {
                         let object_count = reader.read_u32()? as usize;
-                        npcs.reserve_exact(object_count);
+                        npcs.reserve_exact(counted_capacity(object_count, &reader));
 
                         for _ in 0..object_count {
                             let object = read_object(&mut reader)?;
@@ -244,14 +251,15 @@ impl RoseFile for IfoFile {
                 Some(BlockType::MonsterSpawn) => {
                     if !read_options.skip_monster_spawns {
                         let object_count = reader.read_u32()? as usize;
-                        monster_spawns.reserve_exact(object_count);
+                        monster_spawns.reserve_exact(counted_capacity(object_count, &reader));
 
                         for _ in 0..object_count {
                             let object = read_object(&mut reader)?;
                             let _spawn_name = reader.read_u8_length_string()?;
 
                             let basic_count = reader.read_u32()?;
-                            let mut basic_spawns = Vec::with_capacity(basic_count as usize);
+                            let mut basic_spawns =
+                                Vec::with_capacity(counted_capacity(basic_count as usize, &reader));
                             for _ in 0..basic_count {
                                 let _monster_name = reader.read_u8_length_string()?;
                                 let monster_id = reader.read_u32()?;
@@ -263,7 +271,10 @@ impl RoseFile for IfoFile {
                             }
 
                             let tactic_count = reader.read_u32()?;
-                            let mut tactic_spawns = Vec::with_capacity(basic_count as usize);
+                            let mut tactic_spawns = Vec::with_capacity(counted_capacity(
+                                tactic_count as usize,
+                                &reader,
+                            ));
                             for _ in 0..tactic_count {
                                 let _monster_name = reader.read_u8_length_string()?;
                                 let monster_id = reader.read_u32()?;
@@ -295,7 +306,7 @@ impl RoseFile for IfoFile {
                         water_size = reader.read_f32()?;
 
                         let object_count = reader.read_u32()? as usize;
-                        water_planes.reserve_exact(object_count);
+                        water_planes.reserve_exact(counted_capacity(object_count, &reader));
 
                         for _ in 0..object_count {
                             let start = reader.read_vector3_f32()?;
@@ -307,7 +318,7 @@ impl RoseFile for IfoFile {
                 Some(BlockType::Warp) => {
                     if !read_options.skip_warp_objects {
                         let object_count = reader.read_u32()? as usize;
-                        warps.reserve_exact(object_count);
+                        warps.reserve_exact(counted_capacity(object_count, &reader));
 
                         for _ in 0..object_count {
                             let object = read_object(&mut reader)?;
@@ -318,7 +329,7 @@ impl RoseFile for IfoFile {
                 Some(BlockType::EffectObject) => {
                     if !read_options.skip_effect_objects {
                         let object_count = reader.read_u32()? as usize;
-                        effect_objects.reserve_exact(object_count);
+                        effect_objects.reserve_exact(counted_capacity(object_count, &reader));
 
                         for _ in 0..object_count {
                             let object = read_object(&mut reader)?;
@@ -333,7 +344,7 @@ impl RoseFile for IfoFile {
                 Some(BlockType::SoundObject) => {
                     if !read_options.skip_sound_objects {
                         let object_count = reader.read_u32()? as usize;
-                        sound_objects.reserve_exact(object_count);
+                        sound_objects.reserve_exact(counted_capacity(object_count, &reader));
 
                         for _ in 0..object_count {
                             let object = read_object(&mut reader)?;

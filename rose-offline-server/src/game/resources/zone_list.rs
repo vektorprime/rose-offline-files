@@ -17,7 +17,9 @@ struct ZoneData {
 
 #[derive(Resource)]
 pub struct ZoneList {
-    zones: HashMap<ZoneId, ZoneData>,
+    // Indexed by zone id; read by every monster spawn point each tick, so a Vec
+    // instead of a HashMap
+    zones: Vec<Option<ZoneData>>,
     npcs: HashMap<NpcId, Entity>,
 }
 
@@ -29,25 +31,37 @@ impl ZoneList {
         }
     }
 
+    fn get_zone(&self, zone_id: ZoneId) -> Option<&ZoneData> {
+        self.zones
+            .get(zone_id.get() as usize)
+            .and_then(Option::as_ref)
+    }
+
+    fn get_zone_mut(&mut self, zone_id: ZoneId) -> Option<&mut ZoneData> {
+        self.zones
+            .get_mut(zone_id.get() as usize)
+            .and_then(Option::as_mut)
+    }
+
     pub fn add_zone(&mut self, zone_id: ZoneId) {
-        self.zones.insert(
-            zone_id,
-            ZoneData {
-                monster_spawns_enabled: true,
-                event_objects: Default::default(),
-            },
-        );
+        let index = zone_id.get() as usize;
+        if self.zones.len() <= index {
+            self.zones.resize_with(index + 1, || None);
+        }
+        self.zones[index] = Some(ZoneData {
+            monster_spawns_enabled: true,
+            event_objects: Default::default(),
+        });
     }
 
     pub fn get_monster_spawns_enabled(&self, zone_id: ZoneId) -> bool {
-        self.zones
-            .get(&zone_id)
+        self.get_zone(zone_id)
             .map(|zone| zone.monster_spawns_enabled)
             .unwrap_or(false)
     }
 
     pub fn set_monster_spawns_enabled(&mut self, zone_id: ZoneId, enabled: bool) -> bool {
-        if let Some(zone) = self.zones.get_mut(&zone_id) {
+        if let Some(zone) = self.get_zone_mut(zone_id) {
             zone.monster_spawns_enabled = enabled;
             true
         } else {
@@ -63,7 +77,7 @@ impl ZoneList {
         map_chunk_y: i32,
         entity: Entity,
     ) {
-        if let Some(zone) = self.zones.get_mut(&zone_id) {
+        if let Some(zone) = self.get_zone_mut(zone_id) {
             zone.event_objects.insert(
                 EventObjectKey {
                     event_id,
@@ -82,7 +96,7 @@ impl ZoneList {
         map_chunk_x: i32,
         map_chunk_y: i32,
     ) -> Option<Entity> {
-        self.zones.get(&zone_id).and_then(|zone| {
+        self.get_zone(zone_id).and_then(|zone| {
             zone.event_objects
                 .get(&EventObjectKey {
                     event_id,

@@ -3,7 +3,7 @@ use enum_map::Enum;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, num::NonZeroU16, str::FromStr, sync::Arc};
 
-use crate::{EffectFileId, StringDatabase};
+use crate::{ai_database::dense_from_map, EffectFileId, StringDatabase};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Debug, Serialize, Deserialize)]
 pub struct StatusEffectId(NonZeroU16);
@@ -165,7 +165,8 @@ pub struct StatusEffectData {
 
 pub struct StatusEffectDatabase {
     _string_database: Arc<StringDatabase>,
-    status_effects: HashMap<u16, StatusEffectData>,
+    /// Indexed by status effect id, `None` where the map had no entry.
+    status_effects: Vec<Option<StatusEffectData>>,
     decrease_summon_life_status_effect_id: StatusEffectId,
 }
 
@@ -177,13 +178,13 @@ impl StatusEffectDatabase {
     ) -> Self {
         Self {
             _string_database: string_database,
-            status_effects,
+            status_effects: dense_from_map(status_effects),
             decrease_summon_life_status_effect_id,
         }
     }
 
     pub fn get_status_effect(&self, id: StatusEffectId) -> Option<&StatusEffectData> {
-        self.status_effects.get(&id.get())
+        self.status_effects.get(id.get() as usize)?.as_ref()
     }
 
     pub fn get_decrease_summon_life_status_effect(&self) -> Option<&StatusEffectData> {

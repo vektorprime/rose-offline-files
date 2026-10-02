@@ -106,7 +106,7 @@ impl WorldServer {
             ServerMessage::ConnectionRequestSuccess { packet_sequence_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketConnectionReply {
+                    .write_packet_buffered(Packet::from(&PacketConnectionReply {
                         result: ConnectResult::Ok,
                         packet_sequence_id,
                         pay_flags: 0xff,
@@ -116,7 +116,7 @@ impl WorldServer {
             ServerMessage::ConnectionRequestError { .. } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketConnectionReply {
+                    .write_packet_buffered(Packet::from(&PacketConnectionReply {
                         result: ConnectResult::Failed,
                         packet_sequence_id: 0,
                         pay_flags: 0,
@@ -126,7 +126,7 @@ impl WorldServer {
             ServerMessage::ReturnToCharacterSelect => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerReturnToCharacterSelect {}))
+                    .write_packet_buffered(Packet::from(&PacketServerReturnToCharacterSelect {}))
                     .await?;
             }
             ServerMessage::SelectCharacterSuccess {
@@ -137,7 +137,7 @@ impl WorldServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerMoveServer {
+                    .write_packet_buffered(Packet::from(&PacketServerMoveServer {
                         login_token,
                         packet_codec_seed,
                         ip,
@@ -151,7 +151,7 @@ impl WorldServer {
             ServerMessage::CharacterList { character_list } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerCharacterList {
+                    .write_packet_buffered(Packet::from(&PacketServerCharacterList {
                         characters: character_list,
                     }))
                     .await?;
@@ -159,7 +159,7 @@ impl WorldServer {
             ServerMessage::CreateCharacterSuccess { character_slot } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerCreateCharacterReply {
+                    .write_packet_buffered(Packet::from(&PacketServerCreateCharacterReply {
                         result: CreateCharacterResult::Ok,
                         is_platinum: character_slot >= 3,
                     }))
@@ -193,12 +193,12 @@ impl WorldServer {
                     }
                 };
 
-                client.connection.write_packet(packet).await?;
+                client.connection.write_packet_buffered(packet).await?;
             }
             ServerMessage::DeleteCharacterStart { name, delete_time } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerDeleteCharacterReply {
+                    .write_packet_buffered(Packet::from(&PacketServerDeleteCharacterReply {
                         seconds_until_delete: Some(
                             delete_time.get_time_until_delete().as_secs() as u32
                         ),
@@ -209,7 +209,7 @@ impl WorldServer {
             ServerMessage::DeleteCharacterCancel { name } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerDeleteCharacterReply {
+                    .write_packet_buffered(Packet::from(&PacketServerDeleteCharacterReply {
                         seconds_until_delete: None,
                         name: &name,
                     }))
@@ -218,13 +218,18 @@ impl WorldServer {
             ServerMessage::DeleteCharacterError { name } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerDeleteCharacterReply {
+                    .write_packet_buffered(Packet::from(&PacketServerDeleteCharacterReply {
                         seconds_until_delete: None,
                         name: &name,
                     }))
                     .await?;
             }
-            _ => panic!("Received unexpected server message for world server"),
+            // Disconnect instead of panicking the connection task.
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Received unexpected server message for world server"
+                ))
+            }
         }
         Ok(())
     }

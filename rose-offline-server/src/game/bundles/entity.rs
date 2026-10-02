@@ -158,45 +158,52 @@ impl MonsterBundle {
             spawn_zone,
         );
 
-        let mut entity_commands = commands.spawn(MonsterBundle {
-            ability_values,
-            command: Command::default(),
-            health_points,
-            level,
-            motion_data: MotionData::from_npc(&game_data.npcs, npc_id),
-            move_mode,
-            move_speed,
-            next_command: NextCommand::default(),
-            npc: Npc::new(npc_id, 0),
-            object_variables: ObjectVariables::new(MONSTER_OBJECT_VARIABLES_COUNT),
-            position: position.clone(),
-            status_effects,
-            status_effects_regen,
-            spawn_origin,
-            team,
-        });
-        let entity = entity_commands.id();
-
-        if let Some(damage_sources) = damage_sources {
-            entity_commands.insert(damage_sources);
-        }
-
-        if let Some(npc_ai) = npc_ai {
-            entity_commands.insert(npc_ai);
-        }
-
-        if let Some((owner_entity, ..)) = owner {
-            entity_commands.insert(Owner::new(owner_entity));
-        }
-
-        client_entity_join_zone(
-            commands,
+        // Join the zone before inserting so every component goes in with one insert, instead
+        // of moving the new entity between archetypes once per optional component.
+        let entity = commands.spawn_empty().id();
+        let (client_entity, client_entity_sector) = allocate_client_entity(
             client_entity_list,
             entity,
             ClientEntityType::Monster,
             &position,
         )
         .expect("Failed to join monster into zone");
+
+        let monster = (
+            MonsterBundle {
+                ability_values,
+                command: Command::default(),
+                health_points,
+                level,
+                motion_data: MotionData::from_npc(&game_data.npcs, npc_id),
+                move_mode,
+                move_speed,
+                next_command: NextCommand::default(),
+                npc: Npc::new(npc_id, 0),
+                object_variables: ObjectVariables::new(MONSTER_OBJECT_VARIABLES_COUNT),
+                position,
+                status_effects,
+                status_effects_regen,
+                spawn_origin,
+                team,
+            },
+            client_entity,
+            client_entity_sector,
+        );
+
+        let mut entity_commands = commands.entity(entity);
+        match (damage_sources, npc_ai) {
+            (Some(damage_sources), Some(npc_ai)) => {
+                entity_commands.insert((monster, damage_sources, npc_ai))
+            }
+            (Some(damage_sources), None) => entity_commands.insert((monster, damage_sources)),
+            (None, Some(npc_ai)) => entity_commands.insert((monster, npc_ai)),
+            (None, None) => entity_commands.insert(monster),
+        };
+
+        if let Some((owner_entity, ..)) = owner {
+            entity_commands.insert(Owner::new(owner_entity));
+        }
 
         Some(entity)
     }
@@ -231,34 +238,45 @@ impl ItemDropBundle {
 
         let drop_position = Position::new(drop_point, position.zone_id);
 
-        let mut entity_commands = commands.spawn(ItemDropBundle {
-            drop: ItemDrop::with_dropped_item(item),
-            position: drop_position.clone(),
-            entity_expire_time: EntityExpireTime::new(
-                std::time::Instant::now() + ITEM_DROP_ENTITY_EXPIRE_TIME,
-            ),
-        });
-        let entity = entity_commands.id();
-
-        if let Some(owner_entity) = owner_entity {
-            entity_commands.insert((
-                Owner::new(owner_entity),
-                OwnerExpireTime::new(std::time::Instant::now() + ITEM_DROP_OWNER_EXPIRE_TIME),
-            ));
-        }
-
-        if let Some(party_owner_entity) = party_owner_entity {
-            entity_commands.insert(PartyOwner::new(party_owner_entity));
-        }
-
-        client_entity_join_zone(
-            commands,
+        // Join the zone before inserting so every component goes in with one insert, instead
+        // of moving the new entity between archetypes once per optional component.
+        let entity = commands.spawn_empty().id();
+        let (client_entity, client_entity_sector) = allocate_client_entity(
             client_entity_list,
             entity,
             ClientEntityType::ItemDrop,
             &drop_position,
         )
         .expect("Failed to drop item into zone");
+
+        let item_drop = (
+            ItemDropBundle {
+                drop: ItemDrop::with_dropped_item(item),
+                position: drop_position,
+                entity_expire_time: EntityExpireTime::new(
+                    std::time::Instant::now() + ITEM_DROP_ENTITY_EXPIRE_TIME,
+                ),
+            },
+            client_entity,
+            client_entity_sector,
+        );
+        let owner = owner_entity.map(|owner_entity| {
+            (
+                Owner::new(owner_entity),
+                OwnerExpireTime::new(std::time::Instant::now() + ITEM_DROP_OWNER_EXPIRE_TIME),
+            )
+        });
+        let party_owner = party_owner_entity.map(PartyOwner::new);
+
+        let mut entity_commands = commands.entity(entity);
+        match (owner, party_owner) {
+            (Some(owner), Some(party_owner)) => {
+                entity_commands.insert((item_drop, owner, party_owner))
+            }
+            (Some(owner), None) => entity_commands.insert((item_drop, owner)),
+            (None, Some(party_owner)) => entity_commands.insert((item_drop, party_owner)),
+            (None, None) => entity_commands.insert(item_drop),
+        };
 
         Some(entity)
     }
@@ -270,6 +288,21 @@ pub enum ClientEntityJoinZoneError {
     OutOfEntityId,
 }
 
+/// Allocates the entity's client id and sector in its zone, returning the components the
+/// entity must be given.
+fn allocate_client_entity(
+    client_entity_list: &mut ClientEntityList,
+    entity: Entity,
+    client_entity_type: ClientEntityType,
+    position: &Position,
+) -> Result<(ClientEntity, ClientEntitySector), ClientEntityJoinZoneError> {
+    let zone = client_entity_list
+        .get_zone_mut(position.zone_id)
+        .ok_or(ClientEntityJoinZoneError::InvalidZone)?;
+    zone.join_zone(client_entity_type, entity, position.position)
+        .ok_or(ClientEntityJoinZoneError::OutOfEntityId)
+}
+
 pub fn client_entity_join_zone(
     commands: &mut Commands,
     client_entity_list: &mut ClientEntityList,
@@ -277,12 +310,8 @@ pub fn client_entity_join_zone(
     client_entity_type: ClientEntityType,
     position: &Position,
 ) -> Result<ClientEntityId, ClientEntityJoinZoneError> {
-    let zone = client_entity_list
-        .get_zone_mut(position.zone_id)
-        .ok_or(ClientEntityJoinZoneError::InvalidZone)?;
-    let (client_entity, client_entity_sector) = zone
-        .join_zone(client_entity_type, entity, position.position)
-        .ok_or(ClientEntityJoinZoneError::OutOfEntityId)?;
+    let (client_entity, client_entity_sector) =
+        allocate_client_entity(client_entity_list, entity, client_entity_type, position)?;
 
     let client_entity_id = client_entity.id;
     commands

@@ -15,6 +15,8 @@ use crate::game::{
     GameData,
 };
 
+/// Minimum time between two casts of any skill; the client assumes the same 250 ms.
+/// `Cooldowns::skill_global` holds the instant it expires (see `skill_cooldown_ready`).
 pub const GLOBAL_SKILL_COOLDOWN: Duration = Duration::from_millis(250);
 
 #[derive(QueryData)]
@@ -53,17 +55,15 @@ pub struct SkillTargetBundle<'w> {
     pub party_membership: Option<&'w PartyMembership>,
 }
 
-fn check_skill_cooldown(
-    skill_caster: &SkillCasterBundleItem,
-    now: Instant,
-    skill_data: &SkillData,
-) -> bool {
-    let Some(cooldowns) = skill_caster.cooldowns else {
-        return true;
-    };
-
-    if let Some(global) = cooldowns.skill_global {
-        if now - global < GLOBAL_SKILL_COOLDOWN {
+/// Whether the global, per-skill and group cooldowns all allow casting `skill_data` at `now`.
+///
+/// Every `Cooldowns` entry, `skill_global` included, holds the instant it expires
+/// (skill_effect_system stores `now + duration`), so each is compared with `now`
+/// directly. Measuring `now - skill_global` against `GLOBAL_SKILL_COOLDOWN` instead
+/// counted the global cooldown twice (~500 ms instead of 250 ms).
+pub fn skill_cooldown_ready(cooldowns: &Cooldowns, now: Instant, skill_data: &SkillData) -> bool {
+    if let Some(global_finished) = cooldowns.skill_global {
+        if now < global_finished {
             return false;
         }
     }
@@ -90,6 +90,266 @@ fn check_skill_cooldown(
     }
 
     true
+}
+
+/// Whether the caster can pay every `use_ability` cost of `skill_data`.
+/// `skip_mana` waives mana costs.
+#[allow(clippy::too_many_arguments)]
+fn use_ability_values_met(
+    ability_values: &AbilityValues,
+    health_points: &HealthPoints,
+    mana_points: Option<&ManaPoints>,
+    experience_points: Option<&ExperiencePoints>,
+    inventory: Option<&Inventory>,
+    stamina: Option<&Stamina>,
+    equipment: Option<&Equipment>,
+    skill_data: &SkillData,
+    skip_mana: bool,
+) -> bool {
+    for &(use_ability_type, mut use_ability_value) in skill_data.use_ability.iter() {
+        if use_ability_type == AbilityType::Mana {
+            if skip_mana {
+                continue;
+            }
+            let use_mana_rate = (100 - ability_values.get_save_mana()) as f32 / 100.0;
+            use_ability_value = (use_ability_value as f32 * use_mana_rate) as i32;
+        }
+
+        let ability_value = match use_ability_type {
+            AbilityType::Level => ability_values.level,
+            AbilityType::Strength => ability_values.strength,
+            AbilityType::Dexterity => ability_values.dexterity,
+            AbilityType::Intelligence => ability_values.intelligence,
+            AbilityType::Concentration => ability_values.concentration,
+            AbilityType::Charm => ability_values.charm,
+            AbilityType::Sense => ability_values.sense,
+            AbilityType::Health => health_points.hp,
+            AbilityType::Mana => mana_points.map_or(0, |mana_points: &ManaPoints| mana_points.mp),
+            AbilityType::Experience => experience_points
+                .map_or(0, |experience_points: &ExperiencePoints| {
+                    experience_points.xp
+                })
+                .try_into()
+                .unwrap_or(i32::MAX),
+            AbilityType::Money => inventory
+                .map_or(0, |inventory: &Inventory| inventory.money.0)
+                .try_into()
+                .unwrap_or(i32::MAX),
+            AbilityType::Stamina => stamina
+                .map_or(0, |stamina: &Stamina| stamina.stamina)
+                .try_into()
+                .unwrap_or(i32::MAX),
+            AbilityType::Fuel => equipment.map_or(0, |equipment: &Equipment| {
+                equipment
+                    .get_vehicle_item(VehiclePartIndex::Engine)
+                    .map_or(0, |item| item.life as i32)
+            }),
+            invalid => {
+                log::warn!(
+                    "SkillId: {} requires invalid use_ability type {:?}",
+                    skill_data.id.get(),
+                    invalid
+                );
+                -999
+            }
+        };
+
+        if ability_value < use_ability_value {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Whether the caster's weapon or sub weapon is of a class `skill_data` requires.
+fn has_required_equipment(
+    game_data: &GameData,
+    equipment: Option<&Equipment>,
+    skill_data: &SkillData,
+) -> bool {
+    let Some(equipment) = equipment else {
+        return true;
+    };
+
+    if skill_data.required_equipment_class.is_empty() {
+        return true;
+    }
+
+    let weapon_class = equipment
+        .get_equipment_item(EquipmentIndex::Weapon)
+        .and_then(|item| game_data.items.get_base_item(item.item))
+        .map(|item_data| item_data.class);
+    let sub_weapon_class = equipment
+        .get_equipment_item(EquipmentIndex::SubWeapon)
+        .and_then(|item| game_data.items.get_base_item(item.item))
+        .map(|item_data| item_data.class);
+
+    for &required_equipment_class in skill_data.required_equipment_class.iter() {
+        if weapon_class == Some(required_equipment_class) {
+            return true;
+        }
+
+        if sub_weapon_class == Some(required_equipment_class) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// The use requirements `command_system` enforces before it announces a cast and again
+/// before it starts one (cooldowns, driving, use_ability costs, required weapon).
+///
+/// Bots choose their casts with this same check: a cast the server refuses stops the
+/// caster (StopMoveEntity + cleared NextCommand), so a bot picking an unusable skill
+/// mid-chase would halt every time it tried.
+#[allow(clippy::too_many_arguments)]
+pub fn skill_use_requirements_met(
+    now: Instant,
+    game_data: &GameData,
+    client_entity: &ClientEntity,
+    ability_values: &AbilityValues,
+    health_points: &HealthPoints,
+    move_mode: &MoveMode,
+    cooldowns: Option<&Cooldowns>,
+    equipment: Option<&Equipment>,
+    experience_points: Option<&ExperiencePoints>,
+    inventory: Option<&Inventory>,
+    mana_points: Option<&ManaPoints>,
+    stamina: Option<&Stamina>,
+    skill_data: &SkillData,
+) -> bool {
+    if !client_entity.is_character() {
+        // We only check use requirements for characters
+        return true;
+    }
+
+    if let Some(cooldowns) = cooldowns {
+        if !skill_cooldown_ready(cooldowns, now, skill_data) {
+            return false;
+        }
+    }
+
+    if matches!(move_mode, MoveMode::Drive) {
+        return false;
+    }
+
+    if !use_ability_values_met(
+        ability_values,
+        health_points,
+        mana_points,
+        experience_points,
+        inventory,
+        stamina,
+        equipment,
+        skill_data,
+        false,
+    ) {
+        return false;
+    }
+
+    has_required_equipment(game_data, equipment, skill_data)
+}
+
+/// The skill target filter `command_system` enforces for a cast at `target_entity`
+/// (an untargeted cast of a non-self skill type is checked against the caster itself).
+#[allow(clippy::too_many_arguments)]
+pub fn skill_target_filter_allows(
+    caster_entity: Entity,
+    caster_team: &Team,
+    caster_clan: Option<&ClanMembership>,
+    caster_party: Option<&PartyMembership>,
+    target_entity: Entity,
+    target_team: &Team,
+    target_clan: Option<&ClanMembership>,
+    target_party: Option<&PartyMembership>,
+    target_hp: i32,
+    target_client_entity: &ClientEntity,
+    skill_data: &SkillData,
+) -> bool {
+    let target_is_alive = target_hp > 0;
+    let target_is_caster = caster_entity == target_entity;
+
+    match skill_data.target_filter {
+        SkillTargetFilter::OnlySelf => target_is_alive && target_is_caster,
+        SkillTargetFilter::Group => {
+            let caster_party_id = caster_party.and_then(|p| p.party);
+            let target_party_id = target_party.and_then(|p| p.party);
+            target_is_alive
+                && (target_is_caster
+                    || (caster_party_id.is_some() && caster_party_id == target_party_id))
+        }
+        SkillTargetFilter::Guild => {
+            let caster_clan_id = caster_clan.and_then(|c| c.clan());
+            let target_clan_id = target_clan.and_then(|c| c.clan());
+            target_is_alive
+                && (target_is_caster
+                    || (caster_clan_id.is_some() && caster_clan_id == target_clan_id))
+        }
+        SkillTargetFilter::Allied => {
+            target_is_alive
+                && (caster_team.id == target_team.id
+                    || target_team.id == Team::DEFAULT_CHARACTER_TEAM_ID
+                    || target_team.id == Team::DEFAULT_NPC_TEAM_ID)
+        }
+        SkillTargetFilter::Monster => {
+            target_is_alive && matches!(target_client_entity.entity_type, ClientEntityType::Monster)
+        }
+        SkillTargetFilter::Enemy => {
+            target_is_alive
+                && target_team.id != Team::DEFAULT_NPC_TEAM_ID
+                && caster_team.id != target_team.id
+        }
+        SkillTargetFilter::EnemyCharacter => {
+            target_is_alive
+                && caster_team.id != target_team.id
+                && matches!(
+                    target_client_entity.entity_type,
+                    ClientEntityType::Character
+                )
+        }
+        SkillTargetFilter::Character => {
+            target_is_alive
+                && matches!(
+                    target_client_entity.entity_type,
+                    ClientEntityType::Character
+                )
+        }
+        SkillTargetFilter::CharacterOrMonster => {
+            target_is_alive
+                && matches!(
+                    target_client_entity.entity_type,
+                    ClientEntityType::Character | ClientEntityType::Monster
+                )
+        }
+        SkillTargetFilter::DeadAlliedCharacter => {
+            !target_is_alive
+                && !target_is_caster
+                && caster_team.id == target_team.id
+                && matches!(
+                    target_client_entity.entity_type,
+                    ClientEntityType::Character
+                )
+        }
+        SkillTargetFilter::EnemyMonster => {
+            target_is_alive
+                && caster_team.id != target_team.id
+                && matches!(target_client_entity.entity_type, ClientEntityType::Monster)
+        }
+    }
+}
+
+fn check_skill_cooldown(
+    skill_caster: &SkillCasterBundleItem,
+    now: Instant,
+    skill_data: &SkillData,
+) -> bool {
+    skill_caster
+        .cooldowns
+        .map_or(true, |cooldowns: &Cooldowns| {
+            skill_cooldown_ready(cooldowns, now, skill_data)
+        })
 }
 
 fn check_not_disabled(skill_caster: &SkillCasterBundleItem) -> bool {
@@ -249,67 +509,18 @@ fn check_summon_points(
 fn check_use_ability_value(skill_caster: &SkillCasterBundleItem, skill_data: &SkillData) -> bool {
     // Bots have unlimited mana - skip mana checks for LLM buddy bots
     let is_bot = skill_caster.llm_buddy_bot.is_some();
-    
-    for &(use_ability_type, mut use_ability_value) in skill_data.use_ability.iter() {
-        if use_ability_type == AbilityType::Mana {
-            // Bots have unlimited mana
-            if is_bot {
-                continue;
-            }
-            let use_mana_rate = (100 - skill_caster.ability_values.get_save_mana()) as f32 / 100.0;
-            use_ability_value = (use_ability_value as f32 * use_mana_rate) as i32;
-        }
 
-        let ability_value = match use_ability_type {
-            AbilityType::Level => skill_caster.ability_values.level,
-            AbilityType::Strength => skill_caster.ability_values.strength,
-            AbilityType::Dexterity => skill_caster.ability_values.dexterity,
-            AbilityType::Intelligence => skill_caster.ability_values.intelligence,
-            AbilityType::Concentration => skill_caster.ability_values.concentration,
-            AbilityType::Charm => skill_caster.ability_values.charm,
-            AbilityType::Sense => skill_caster.ability_values.sense,
-            AbilityType::Health => skill_caster.health_points.hp,
-            AbilityType::Mana => skill_caster
-                .mana_points
-                .map_or(0, |mana_points: &ManaPoints| mana_points.mp),
-            AbilityType::Experience => skill_caster
-                .experience_points
-                .map_or(0, |experience_points: &ExperiencePoints| {
-                    experience_points.xp
-                })
-                .try_into()
-                .unwrap_or(i32::MAX),
-            AbilityType::Money => skill_caster
-                .inventory
-                .map_or(0, |inventory: &Inventory| inventory.money.0)
-                .try_into()
-                .unwrap_or(i32::MAX),
-            AbilityType::Stamina => skill_caster
-                .stamina
-                .map_or(0, |stamina: &Stamina| stamina.stamina)
-                .try_into()
-                .unwrap_or(i32::MAX),
-            AbilityType::Fuel => skill_caster.equipment.map_or(0, |equipment: &Equipment| {
-                equipment
-                    .get_vehicle_item(VehiclePartIndex::Engine)
-                    .map_or(0, |item| item.life as i32)
-            }),
-            invalid => {
-                log::warn!(
-                    "SkillId: {} requires invalid use_ability type {:?}",
-                    skill_data.id.get(),
-                    invalid
-                );
-                -999
-            }
-        };
-
-        if ability_value < use_ability_value {
-            return false;
-        }
-    }
-
-    true
+    use_ability_values_met(
+        skill_caster.ability_values,
+        skill_caster.health_points,
+        skill_caster.mana_points,
+        skill_caster.experience_points,
+        skill_caster.inventory,
+        skill_caster.stamina,
+        skill_caster.equipment,
+        skill_data,
+        is_bot,
+    )
 }
 
 fn check_equipment(
@@ -317,34 +528,7 @@ fn check_equipment(
     skill_caster: &SkillCasterBundleItem,
     skill_data: &SkillData,
 ) -> bool {
-    let Some(equipment) = skill_caster.equipment else {
-        return true;
-    };
-
-    if skill_data.required_equipment_class.is_empty() {
-        return true;
-    }
-
-    let weapon_class = equipment
-        .get_equipment_item(EquipmentIndex::Weapon)
-        .and_then(|item| game_data.items.get_base_item(item.item))
-        .map(|item_data| item_data.class);
-    let sub_weapon_class = equipment
-        .get_equipment_item(EquipmentIndex::SubWeapon)
-        .and_then(|item| game_data.items.get_base_item(item.item))
-        .map(|item_data| item_data.class);
-
-    for &required_equipment_class in skill_data.required_equipment_class.iter() {
-        if weapon_class == Some(required_equipment_class) {
-            return true;
-        }
-
-        if sub_weapon_class == Some(required_equipment_class) {
-            return true;
-        }
-    }
-
-    false
+    has_required_equipment(game_data, skill_caster.equipment, skill_data)
 }
 
 pub fn skill_can_use(

@@ -590,6 +590,8 @@ fn subtract_skill_use_cost(
 
     if let Some(mut cooldowns) = skill_caster1.cooldowns {
         let now = Instant::now();
+        // Expiry instant, like the per-skill and group cooldowns below; readers compare
+        // it with `now` (bundles::skill_cooldown_ready).
         cooldowns.skill_global = Some(now + GLOBAL_SKILL_COOLDOWN);
 
         // Send UpdateCooldown message to the client for server-authoritative cooldown tracking

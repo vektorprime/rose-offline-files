@@ -456,7 +456,8 @@ pub enum ServerMessage {
         health: HealthPoints,
         spawn_command_state: SpawnCommandState,
         move_mode: MoveMode,
-        status_effects: ActiveStatusEffects,
+        // Boxed: large payloads would make every ServerMessage as big as them.
+        status_effects: Box<ActiveStatusEffects>,
     },
     SpawnEntityNpc {
         entity_id: ClientEntityId,
@@ -467,7 +468,7 @@ pub enum ServerMessage {
         health: HealthPoints,
         spawn_command_state: SpawnCommandState,
         move_mode: MoveMode,
-        status_effects: ActiveStatusEffects,
+        status_effects: Box<ActiveStatusEffects>,
     },
     StopMoveEntity {
         entity_id: ClientEntityId,
@@ -534,9 +535,9 @@ pub enum ServerMessage {
     },
     UpdateStatusEffects {
         entity_id: ClientEntityId,
-        status_effects: ActiveStatusEffects,
+        status_effects: Box<ActiveStatusEffects>,
         updated_values: Vec<i32>,
-        regen_effects: EnumMap<StatusEffectType, Option<ActiveStatusEffectRegen>>,
+        regen_effects: Box<EnumMap<StatusEffectType, Option<ActiveStatusEffectRegen>>>,
     },
     UpdateSpeed {
         entity_id: ClientEntityId,
@@ -695,6 +696,18 @@ pub enum ServerMessage {
     SitToggle {
         entity_id: ClientEntityId,
     },
+    SailState {
+        entity_id: ClientEntityId,
+        position: Vec3,
+        heading: f32,
+        speed: f32,
+        sail_trim: f32,
+    },
+    WindStateUpdate {
+        angle: f32,
+        speed: f32,
+        gust_factor: f32,
+    },
     UseEmote {
         entity_id: ClientEntityId,
         motion_id: MotionId,
@@ -741,7 +754,7 @@ pub enum ServerMessage {
         character_id: CharacterUniqueId,
     },
     PartyMemberUpdateInfo {
-        member_info: PartyMemberInfoOnline,
+        member_info: Box<PartyMemberInfoOnline>,
     },
     PartyMemberRewardItem {
         client_entity_id: ClientEntityId,
@@ -828,4 +841,16 @@ pub enum ServerMessage {
     ClanMemberList {
         members: Vec<ClanMemberInfo>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ServerMessage;
+
+    #[test]
+    fn server_message_stays_small() {
+        // Every queued, cloned or moved ServerMessage costs the size of the largest
+        // variant, so large payloads are boxed (UpdateStatusEffects was ~1.4 KB).
+        assert!(std::mem::size_of::<ServerMessage>() <= 256);
+    }
 }

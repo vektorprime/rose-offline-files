@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bevy::ecs::prelude::Component;
 
 use rose_data::{
@@ -6,43 +8,41 @@ use rose_data::{
 };
 use rose_game_common::components::CharacterGender;
 
+/// The parts of a motion file the server uses. Copying these instead of cloning the whole
+/// MotionFileData avoids a path allocation per motion for every spawn / motion refresh.
+#[derive(Copy, Clone, Debug)]
+pub struct MotionTiming {
+    pub duration: Duration,
+    pub total_attack_frames: usize,
+}
+
+impl MotionTiming {
+    fn from_motion(motion: &MotionFileData) -> Self {
+        Self {
+            duration: motion.duration,
+            total_attack_frames: motion.total_attack_frames,
+        }
+    }
+}
+
+// Only the motions the server reads are stored (see the get_* accessors and damage_system).
 pub struct MotionDataCharacter {
     pub weapon_motion_type: usize,
     pub gender: CharacterGender,
     pub base_vehicle_motion_index: Option<usize>,
-    pub attack1: Option<MotionFileData>,
-    pub attack2: Option<MotionFileData>,
-    pub attack3: Option<MotionFileData>,
-    pub die: Option<MotionFileData>,
-    pub fall: Option<MotionFileData>,
-    pub hit: Option<MotionFileData>,
-    pub jump1: Option<MotionFileData>,
-    pub jump2: Option<MotionFileData>,
-    pub pickup_dropped_item: Option<MotionFileData>,
-    pub raise: Option<MotionFileData>,
-    pub run: Option<MotionFileData>,
-    pub sit: Option<MotionFileData>,
-    pub sitting: Option<MotionFileData>,
-    pub standup: Option<MotionFileData>,
-    pub stop1: Option<MotionFileData>,
-    pub stop2: Option<MotionFileData>,
-    pub stop3: Option<MotionFileData>,
-    pub walk: Option<MotionFileData>,
+    pub attack1: Option<MotionTiming>,
+    pub die: Option<MotionTiming>,
+    pub hit: Option<MotionTiming>,
+    pub pickup_dropped_item: Option<MotionTiming>,
+    pub sitting: Option<MotionTiming>,
+    pub standup: Option<MotionTiming>,
 }
 
 pub struct MotionDataNpc {
     pub npc_id: NpcId,
-    pub stop: Option<MotionFileData>,
-    pub walk: Option<MotionFileData>,
-    pub attack: Option<MotionFileData>,
-    pub hit: Option<MotionFileData>,
-    pub die: Option<MotionFileData>,
-    pub run: Option<MotionFileData>,
-    pub cast1: Option<MotionFileData>,
-    pub skill_action1: Option<MotionFileData>,
-    pub cast2: Option<MotionFileData>,
-    pub skill_action2: Option<MotionFileData>,
-    pub etc: Option<MotionFileData>,
+    pub attack: Option<MotionTiming>,
+    pub hit: Option<MotionTiming>,
+    pub die: Option<MotionTiming>,
 }
 
 #[derive(Component)]
@@ -53,21 +53,17 @@ pub enum MotionData {
 
 impl MotionData {
     pub fn from_npc(npc_database: &NpcDatabase, npc_id: NpcId) -> Self {
-        let get_motion = |action| npc_database.get_npc_action_motion(npc_id, action).cloned();
+        let get_motion = |action| {
+            npc_database
+                .get_npc_action_motion(npc_id, action)
+                .map(|motion| MotionTiming::from_motion(motion))
+        };
 
         Self::Npc(MotionDataNpc {
             npc_id,
-            stop: get_motion(NpcMotionAction::Stop),
-            walk: get_motion(NpcMotionAction::Move),
             attack: get_motion(NpcMotionAction::Attack),
             hit: get_motion(NpcMotionAction::Hit),
             die: get_motion(NpcMotionAction::Die),
-            run: get_motion(NpcMotionAction::Run),
-            cast1: get_motion(NpcMotionAction::Cast1),
-            skill_action1: get_motion(NpcMotionAction::SkillAction1),
-            cast2: get_motion(NpcMotionAction::Cast2),
-            skill_action2: get_motion(NpcMotionAction::SkillAction2),
-            etc: get_motion(NpcMotionAction::Etc),
         })
     }
 
@@ -83,7 +79,7 @@ impl MotionData {
         let get_motion = |action| {
             character_motion_database
                 .get_character_action_motion(action, weapon_motion_type, gender_index)
-                .cloned()
+                .map(|motion| MotionTiming::from_motion(motion))
         };
 
         Self::Character(MotionDataCharacter {
@@ -91,23 +87,11 @@ impl MotionData {
             gender,
             base_vehicle_motion_index: None,
             attack1: get_motion(CharacterMotionAction::Attack),
-            attack2: get_motion(CharacterMotionAction::Attack2),
-            attack3: get_motion(CharacterMotionAction::Attack3),
             die: get_motion(CharacterMotionAction::Die),
-            fall: get_motion(CharacterMotionAction::Fall),
             hit: get_motion(CharacterMotionAction::Hit),
-            jump1: get_motion(CharacterMotionAction::Jump1),
-            jump2: get_motion(CharacterMotionAction::Jump2),
             pickup_dropped_item: get_motion(CharacterMotionAction::Pickitem),
-            raise: get_motion(CharacterMotionAction::Raise),
-            run: get_motion(CharacterMotionAction::Run),
-            sit: get_motion(CharacterMotionAction::Sit),
             sitting: get_motion(CharacterMotionAction::Sitting),
             standup: get_motion(CharacterMotionAction::Standup),
-            stop1: get_motion(CharacterMotionAction::Stop1),
-            stop2: get_motion(CharacterMotionAction::Stop2),
-            stop3: get_motion(CharacterMotionAction::Stop3),
-            walk: get_motion(CharacterMotionAction::Walk),
         })
     }
 
@@ -119,7 +103,7 @@ impl MotionData {
         let get_motion = |action| {
             character_motion_database
                 .get_vehicle_action_motion(action, base_vehicle_motion_index, weapon_motion_type)
-                .cloned()
+                .map(|motion| MotionTiming::from_motion(motion))
         };
 
         Self::Character(MotionDataCharacter {
@@ -127,55 +111,43 @@ impl MotionData {
             gender: CharacterGender::Male,
             base_vehicle_motion_index: Some(base_vehicle_motion_index),
             attack1: get_motion(VehicleMotionAction::Attack1),
-            attack2: get_motion(VehicleMotionAction::Attack2),
-            attack3: get_motion(VehicleMotionAction::Attack3),
             die: get_motion(VehicleMotionAction::Die),
-            fall: get_motion(VehicleMotionAction::Stop),
             hit: get_motion(VehicleMotionAction::Stop),
-            jump1: get_motion(VehicleMotionAction::Stop),
-            jump2: get_motion(VehicleMotionAction::Stop),
             pickup_dropped_item: get_motion(VehicleMotionAction::Stop),
-            raise: get_motion(VehicleMotionAction::Stop),
-            run: get_motion(VehicleMotionAction::Move),
-            sit: get_motion(VehicleMotionAction::Stop),
             sitting: get_motion(VehicleMotionAction::Stop),
             standup: get_motion(VehicleMotionAction::Stop),
-            stop1: get_motion(VehicleMotionAction::Stop),
-            stop2: get_motion(VehicleMotionAction::Stop),
-            stop3: get_motion(VehicleMotionAction::Stop),
-            walk: get_motion(VehicleMotionAction::Move),
         })
     }
 
-    pub fn get_attack(&self) -> Option<&MotionFileData> {
+    pub fn get_attack(&self) -> Option<&MotionTiming> {
         match self {
             MotionData::Character(character) => character.attack1.as_ref(),
             MotionData::Npc(npc) => npc.attack.as_ref(),
         }
     }
 
-    pub fn get_die(&self) -> Option<&MotionFileData> {
+    pub fn get_die(&self) -> Option<&MotionTiming> {
         match self {
             MotionData::Character(character) => character.die.as_ref(),
             MotionData::Npc(npc) => npc.die.as_ref(),
         }
     }
 
-    pub fn get_pickup_item_drop(&self) -> Option<&MotionFileData> {
+    pub fn get_pickup_item_drop(&self) -> Option<&MotionTiming> {
         match self {
             MotionData::Character(character) => character.pickup_dropped_item.as_ref(),
             MotionData::Npc(_) => None,
         }
     }
 
-    pub fn get_sit_sitting(&self) -> Option<&MotionFileData> {
+    pub fn get_sit_sitting(&self) -> Option<&MotionTiming> {
         match self {
             MotionData::Character(character) => character.sitting.as_ref(),
             MotionData::Npc(_) => None,
         }
     }
 
-    pub fn get_sit_standing(&self) -> Option<&MotionFileData> {
+    pub fn get_sit_standing(&self) -> Option<&MotionTiming> {
         match self {
             MotionData::Character(character) => character.standup.as_ref(),
             MotionData::Npc(_) => None,

@@ -14,7 +14,7 @@ use std::{
     marker::PhantomData,
     num::NonZeroU8,
     ops::{Range, RangeInclusive},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use rose_data::{ClanMemberPosition, Item, MotionId, NpcId, SkillId, ZoneId};
@@ -29,7 +29,7 @@ use rose_file_readers::{
 use rose_game_common::{data::Damage, messages::PartyXpSharing};
 
 use crate::game::{
-    bundles::{client_entity_leave_zone, ItemDropBundle, MonsterBundle},
+    bundles::{ItemDropBundle, MonsterBundle},
     components::{
         AbilityValues, Clan, ClanMembership, ClientEntity, ClientEntitySector, ClientEntityType,
         Command, CommandData, DamageSources, DelayedSpawn, DroppedItem, GameClient, HealthPoints,
@@ -398,7 +398,8 @@ fn ai_condition_month_day_time(
         }
     }
 
-    let local_day_minutes = local_time.hour() as i32 + local_time.minute() as i32;
+    // Minutes since midnight, matching how the AIP reader builds day_minutes_range.
+    let local_day_minutes = local_time.hour() as i32 * 60 + local_time.minute() as i32;
     day_minutes_range.contains(&local_day_minutes)
 }
 
@@ -409,7 +410,8 @@ fn ai_condition_week_day_time(week_day: u8, day_minutes_range: &RangeInclusive<i
         return false;
     }
 
-    let local_day_minutes = local_time.hour() as i32 + local_time.minute() as i32;
+    // Minutes since midnight, matching how the AIP reader builds day_minutes_range.
+    let local_day_minutes = local_time.hour() as i32 * 60 + local_time.minute() as i32;
     day_minutes_range.contains(&local_day_minutes)
 }
 
@@ -1699,55 +1701,70 @@ pub fn npc_ai_system(
     mut reward_xp_events: MessageWriter<RewardXpEvent>,
 ) {
     for mut source in npc_query.iter_mut() {
+        // Nothing to run for an NPC that is busy (neither idle nor dying), has no damage to
+        // react to and has already run its created trigger.
+        if source.ai.has_run_created_trigger
+            && source.ai.pending_damage.is_empty()
+            && !matches!(
+                source.command.command,
+                CommandData::Stop { .. } | CommandData::Die { .. }
+            )
+        {
+            continue;
+        }
+
+        // ai_index cannot change during this iteration (NPC transforms are deferred commands).
+        let ai_program = ai_system_resources.game_data.ai.get_ai(source.ai.ai_index);
+
         if !source.ai.has_run_created_trigger {
-            if let Some(ai_program) = ai_system_resources.game_data.ai.get_ai(source.ai.ai_index) {
-                if let Some(trigger_on_created) = ai_program.trigger_on_created.as_ref() {
-                    npc_ai_run_trigger(
-                        &mut ai_system_parameters,
-                        &ai_system_resources,
-                        trigger_on_created,
-                        &source,
-                        None,
-                        None,
-                        false,
-                    );
-                }
+            if let Some(trigger_on_created) =
+                ai_program.and_then(|ai_program| ai_program.trigger_on_created.as_ref())
+            {
+                npc_ai_run_trigger(
+                    &mut ai_system_parameters,
+                    &ai_system_resources,
+                    trigger_on_created,
+                    &source,
+                    None,
+                    None,
+                    false,
+                );
             }
 
             source.ai.has_run_created_trigger = true;
         }
 
-        if let Some(ai_program) = ai_system_resources.game_data.ai.get_ai(source.ai.ai_index) {
-            if let Some(trigger_on_damaged) = ai_program.trigger_on_damaged.as_ref() {
-                let mut rng = rand::thread_rng();
-                for &(attacker_entity, damage) in source.ai.pending_damage.iter() {
-                    if source.command.target_entity().is_some()
-                        && ai_program.damage_trigger_new_target_chance < rng.gen_range(0..100)
-                    {
-                        continue;
-                    }
+        if !source.ai.pending_damage.is_empty() {
+            if let Some(ai_program) = ai_program {
+                if let Some(trigger_on_damaged) = ai_program.trigger_on_damaged.as_ref() {
+                    let mut rng = rand::thread_rng();
+                    for &(attacker_entity, damage) in source.ai.pending_damage.iter() {
+                        if source.command.target_entity().is_some()
+                            && ai_program.damage_trigger_new_target_chance < rng.gen_range(0..100)
+                        {
+                            continue;
+                        }
 
-                    if let Ok(attacker_data) = attacker_query.get(attacker_entity) {
-                        npc_ai_run_trigger(
-                            &mut ai_system_parameters,
-                            &ai_system_resources,
-                            trigger_on_damaged,
-                            &source,
-                            Some(attacker_data),
-                            Some(damage),
-                            false,
-                        );
+                        if let Ok(attacker_data) = attacker_query.get(attacker_entity) {
+                            npc_ai_run_trigger(
+                                &mut ai_system_parameters,
+                                &ai_system_resources,
+                                trigger_on_damaged,
+                                &source,
+                                Some(attacker_data),
+                                Some(damage),
+                                false,
+                            );
+                        }
                     }
                 }
             }
+            source.ai.pending_damage.clear();
         }
-        source.ai.pending_damage.clear();
 
         match source.command.command {
             CommandData::Stop { .. } => {
-                if let Some(ai_program) =
-                    ai_system_resources.game_data.ai.get_ai(source.ai.ai_index)
-                {
+                if let Some(ai_program) = ai_program {
                     if let Some(trigger_on_idle) = ai_program.trigger_on_idle.as_ref() {
                         source.ai.idle_duration += ai_system_resources.time.delta();
 
@@ -1785,11 +1802,8 @@ pub fn npc_ai_system(
                     }
 
                     // Run on dead AI
-                    if let Some(trigger_on_dead) = ai_system_resources
-                        .game_data
-                        .ai
-                        .get_ai(source.ai.ai_index)
-                        .and_then(|ai_program| ai_program.trigger_on_dead.as_ref())
+                    if let Some(trigger_on_dead) =
+                        ai_program.and_then(|ai_program| ai_program.trigger_on_dead.as_ref())
                     {
                         let attacker_data = killer_entity
                             .and_then(|killer_entity| attacker_query.get(killer_entity).ok());
@@ -1813,7 +1827,9 @@ pub fn npc_ai_system(
 
                             // Reward XP to all attackers
                             for damage_source in damage_sources.damage_sources.iter() {
-    let time_since_damage = Instant::now().elapsed().as_secs_f64() - damage_source.last_damage_seconds;
+    // last_damage_seconds is stamped with Time::elapsed_secs_f64 by damage_system.
+    let time_since_damage =
+        ai_system_resources.time.elapsed_secs_f64() - damage_source.last_damage_seconds;
     if time_since_damage > DAMAGE_REWARD_EXPIRE_TIME.as_secs_f64() {
         // Damage expired, ignore.
         continue;
@@ -2055,14 +2071,18 @@ pub fn npc_ai_system(
                         source.command.duration >= required_duration
                     });
                 if command_complete {
-                    client_entity_leave_zone(
-                        &mut ai_system_parameters.commands,
-                        &mut ai_system_parameters.client_entity_list,
-                        source.entity,
-                        source.client_entity,
-                        source.client_entity_sector,
-                        source.position,
-                    );
+                    // Only the zone slot needs releasing: removing the client entity components
+                    // first is redundant as the entity is despawned.
+                    if let Some(zone) = ai_system_parameters
+                        .client_entity_list
+                        .get_zone_mut(source.position.zone_id)
+                    {
+                        zone.leave_zone(
+                            source.entity,
+                            source.client_entity,
+                            source.client_entity_sector,
+                        );
+                    }
                     ai_system_parameters
                         .commands
                         .entity(source.entity)

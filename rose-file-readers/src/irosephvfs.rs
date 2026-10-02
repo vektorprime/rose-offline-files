@@ -185,20 +185,30 @@ impl IrosePhVfsIndex {
     }
 }
 
-impl VirtualFilesystemDevice for IrosePhVfsIndex {
-    fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile, anyhow::Error> {
+impl IrosePhVfsIndex {
+    fn find(&self, vfs_path: &VfsPath) -> Option<&[u8]> {
         let path_str = vfs_path.path().to_string_lossy();
         let path_hash = FileNameHash::from(&*path_str).hash;
 
         for storage in &self.storages {
             if let Some(entry) = storage.files.get(&path_hash) {
-                return Ok(VfsFile::View(
-                    &storage.mmap[entry.offset..entry.offset + entry.size],
-                ));
+                return Some(&storage.mmap[entry.offset..entry.offset + entry.size]);
             }
         }
 
-        Err(VfsError::FileNotFound(vfs_path.path().into()).into())
+        None
+    }
+}
+
+impl VirtualFilesystemDevice for IrosePhVfsIndex {
+    fn open_file(&self, vfs_path: &VfsPath) -> Result<VfsFile, anyhow::Error> {
+        self.find(vfs_path)
+            .map(VfsFile::View)
+            .ok_or_else(|| VfsError::FileNotFound(vfs_path.path().into()).into())
+    }
+
+    fn try_open_file(&self, vfs_path: &VfsPath) -> Result<Option<VfsFile>, anyhow::Error> {
+        Ok(self.find(vfs_path).map(VfsFile::View))
     }
 
     fn exists(&self, vfs_path: &VfsPath) -> bool {

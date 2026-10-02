@@ -14,7 +14,7 @@ mod state;
 pub use channels::{
     BotSummaryData, DeleteBotResponse, GetBotContextResponse, GetBotInventoryResponse,
     GetBotListResponse, GetBotSkillsResponse, GetChatHistoryResponse, GetPlayerStatusResponse,
-    GetZoneInfoResponse, LlmBotCommand, LlmBotManager,
+    GetZoneInfoResponse, LlmBotCommand, LlmBotManager, ResponseSender,
 };
 pub use routes::create_router;
 pub use server::{start_api_server, ApiServerConfig};

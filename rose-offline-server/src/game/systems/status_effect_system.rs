@@ -32,6 +32,12 @@ fn update_status_effect_regen(regen: &mut ActiveStatusEffectRegen, time: &Time) 
     regen.applied_value - prev_applied_value
 }
 
+fn is_regen_complete(regen_slot: &Option<ActiveStatusEffectRegen>) -> bool {
+    regen_slot
+        .as_ref()
+        .is_some_and(|regen| regen.applied_value == regen.total_value)
+}
+
 pub fn status_effect_system(
     mut query: Query<(
         Entity,
@@ -47,6 +53,8 @@ pub fn status_effect_system(
     game_data: Res<GameData>,
     time: Res<Time>,
 ) {
+    let now = Instant::now();
+
     for (
         entity,
         client_entity,
@@ -67,6 +75,17 @@ pub fn status_effect_system(
                 false
             }
         };
+
+        // Fast path for the common case of an entity without any status effect: there is
+        // nothing to tick or expire. Regens only advance while their effect is active, and
+        // apply_potion is the only code that fills a regen slot (only IncreaseHp / IncreaseMp),
+        // so checking those two slots for a completed regen keeps the expiry below exact.
+        if status_effects.active.values().all(Option::is_none)
+            && !is_regen_complete(&status_effects_regen.regens[StatusEffectType::IncreaseHp])
+            && !is_regen_complete(&status_effects_regen.regens[StatusEffectType::IncreaseMp])
+        {
+            continue;
+        }
 
         for (status_effect_type, status_effect_slot) in status_effects.active.iter() {
             if let Some(status_effect) = status_effect_slot {
@@ -158,7 +177,7 @@ pub fn status_effect_system(
 
                 // Check if expire time has been reached
                 if let Some(expire_time) = status_effects.expire_times[status_effect_type] {
-                    if expire_time <= Instant::now() {
+                    if expire_time <= now {
                         expired_status_effects[status_effect_type] = true;
                     }
                 }
@@ -167,10 +186,8 @@ pub fn status_effect_system(
 
         // Check if any regen has expired
         for (status_effect_type, regen_slot) in status_effects_regen.regens.iter() {
-            if let Some(regen) = regen_slot.as_ref() {
-                if regen.applied_value == regen.total_value {
-                    expired_status_effects[status_effect_type] = true;
-                }
+            if is_regen_complete(regen_slot) {
+                expired_status_effects[status_effect_type] = true;
             }
         }
 
@@ -238,9 +255,9 @@ pub fn status_effect_system(
                 client_entity,
                 ServerMessage::UpdateStatusEffects {
                     entity_id: client_entity.id,
-                    status_effects: status_effects.active.clone(),
+                    status_effects: Box::new(status_effects.active.clone()),
                     updated_values,
-                    regen_effects: status_effects_regen.regens.clone(),
+                    regen_effects: Box::new(status_effects_regen.regens.clone()),
                 },
             );
         }

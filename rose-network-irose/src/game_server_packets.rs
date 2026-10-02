@@ -37,7 +37,7 @@ use rose_game_common::{
 use rose_network_common::{Packet, PacketError, PacketReader, PacketWriter};
 
 use crate::common_packets::{
-    PacketEquipmentAmmoPart, PacketReadCharacterGender, PacketReadClanMark,
+    truncate_chat_text, PacketEquipmentAmmoPart, PacketReadCharacterGender, PacketReadClanMark,
     PacketReadClanMemberPosition, PacketReadDamage, PacketReadEntityId, PacketReadEquipmentIndex,
     PacketReadHotbarSlot, PacketReadItemSlot, PacketReadItems, PacketReadMoveMode,
     PacketReadPartyMemberInfo, PacketReadPartyRules, PacketReadSkillSlot,
@@ -128,6 +128,8 @@ pub enum ServerPackets {
     PartyMemberUpdateInfo = 0x7d5,
     PartyUpdateRules = 0x7d7,
     ClanCommand = 0x7e0,
+    SailState = 0x7e4,
+    WindStateUpdate = 0x7e5,
 }
 
 #[allow(dead_code)]
@@ -1073,7 +1075,7 @@ impl<'a> From<&'a PacketServerLocalChat<'a>> for Packet {
     fn from(packet: &'a PacketServerLocalChat<'a>) -> Self {
         let mut writer = PacketWriter::new(ServerPackets::LocalChat as u16);
         writer.write_entity_id(packet.entity_id);
-        writer.write_null_terminated_utf8(packet.text);
+        writer.write_null_terminated_utf8(truncate_chat_text(packet.text, 2));
         writer.into()
     }
 }
@@ -1102,7 +1104,7 @@ impl<'a> From<&'a PacketServerShoutChat<'a>> for Packet {
     fn from(packet: &'a PacketServerShoutChat<'a>) -> Self {
         let mut writer = PacketWriter::new(ServerPackets::ShoutChat as u16);
         writer.write_null_terminated_utf8(packet.name);
-        writer.write_null_terminated_utf8(packet.text);
+        writer.write_null_terminated_utf8(truncate_chat_text(packet.text, packet.name.len() + 1));
         writer.into()
     }
 }
@@ -1130,7 +1132,8 @@ impl<'a> TryFrom<&'a Packet> for PacketServerAnnounceChat<'a> {
 impl<'a> From<&'a PacketServerAnnounceChat<'a>> for Packet {
     fn from(packet: &'a PacketServerAnnounceChat<'a>) -> Self {
         let mut writer = PacketWriter::new(ServerPackets::AnnounceChat as u16);
-        writer.write_null_terminated_utf8(packet.text);
+        let name_bytes = packet.name.map_or(0, |name| name.len() + 1);
+        writer.write_null_terminated_utf8(truncate_chat_text(packet.text, name_bytes));
         if let Some(name) = packet.name {
             writer.write_null_terminated_utf8(name);
         }
@@ -1162,7 +1165,7 @@ impl<'a> From<&'a PacketServerWhisper<'a>> for Packet {
     fn from(packet: &'a PacketServerWhisper<'a>) -> Self {
         let mut writer = PacketWriter::new(ServerPackets::Whisper as u16);
         writer.write_null_terminated_utf8(packet.from);
-        writer.write_null_terminated_utf8(packet.text);
+        writer.write_null_terminated_utf8(truncate_chat_text(packet.text, packet.from.len() + 1));
         writer.into()
     }
 }
@@ -3648,6 +3651,94 @@ impl From<&PacketServerMoveToggle> for Packet {
         if let Some(run_speed) = packet.run_speed {
             writer.write_u16(run_speed as u16);
         }
+        writer.into()
+    }
+}
+
+pub struct PacketServerSailState {
+    pub entity_id: ClientEntityId,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub heading: f32,
+    pub speed: f32,
+    pub sail_trim: f32,
+}
+
+impl TryFrom<&Packet> for PacketServerSailState {
+    type Error = PacketError;
+
+    fn try_from(packet: &Packet) -> Result<Self, PacketError> {
+        if packet.command != ServerPackets::SailState as u16 {
+            return Err(PacketError::InvalidPacket);
+        }
+
+        let mut reader = PacketReader::from(packet);
+        let entity_id = reader.read_entity_id()?;
+        let x = reader.read_f32()?;
+        let y = reader.read_f32()?;
+        let z = reader.read_f32()?;
+        let heading = reader.read_f32()?;
+        let speed = reader.read_f32()?;
+        let sail_trim = reader.read_f32()?;
+        Ok(Self {
+            entity_id,
+            x,
+            y,
+            z,
+            heading,
+            speed,
+            sail_trim,
+        })
+    }
+}
+
+impl From<&PacketServerSailState> for Packet {
+    fn from(packet: &PacketServerSailState) -> Self {
+        let mut writer = PacketWriter::new(ServerPackets::SailState as u16);
+        writer.write_entity_id(packet.entity_id);
+        writer.write_f32(packet.x);
+        writer.write_f32(packet.y);
+        writer.write_f32(packet.z);
+        writer.write_f32(packet.heading);
+        writer.write_f32(packet.speed);
+        writer.write_f32(packet.sail_trim);
+        writer.into()
+    }
+}
+
+pub struct PacketServerWindState {
+    pub angle: f32,
+    pub speed: f32,
+    pub gust_factor: f32,
+}
+
+impl TryFrom<&Packet> for PacketServerWindState {
+    type Error = PacketError;
+
+    fn try_from(packet: &Packet) -> Result<Self, PacketError> {
+        if packet.command != ServerPackets::WindStateUpdate as u16 {
+            return Err(PacketError::InvalidPacket);
+        }
+
+        let mut reader = PacketReader::from(packet);
+        let angle = reader.read_f32()?;
+        let speed = reader.read_f32()?;
+        let gust_factor = reader.read_f32()?;
+        Ok(Self {
+            angle,
+            speed,
+            gust_factor,
+        })
+    }
+}
+
+impl From<&PacketServerWindState> for Packet {
+    fn from(packet: &PacketServerWindState) -> Self {
+        let mut writer = PacketWriter::new(ServerPackets::WindStateUpdate as u16);
+        writer.write_f32(packet.angle);
+        writer.write_f32(packet.speed);
+        writer.write_f32(packet.gust_factor);
         writer.into()
     }
 }

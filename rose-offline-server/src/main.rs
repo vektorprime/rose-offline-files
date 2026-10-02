@@ -55,7 +55,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             .add_filter_ignore_str("packets")
             .add_filter_ignore_str("quest")
             .add_filter_ignore_str("tracing::span")
-            .add_filter_ignore_str("big-brain")
+            .add_filter_ignore_str("big_brain")
             .build(),
         TerminalMode::Stdout,
         ColorChoice::Auto,

@@ -2,7 +2,7 @@ use bytes::Buf;
 use encoding_rs::{EUC_KR, UTF_16LE};
 use std::{
     borrow::Cow,
-    io::{Cursor, Read, Seek, SeekFrom},
+    io::{Cursor, Seek, SeekFrom},
     str,
 };
 use thiserror::Error;
@@ -14,6 +14,25 @@ pub enum ReadError {
     #[error("Unexpected end of file")]
     UnexpectedEof,
 }
+
+/// Element types `RoseFileReader::read_vec` may fill straight from file bytes.
+///
+/// # Safety
+/// Every bit pattern of `size_of::<Self>()` bytes must be a valid value and the type
+/// must have no padding.
+pub unsafe trait PlainData: Copy {}
+
+unsafe impl PlainData for u8 {}
+unsafe impl PlainData for u16 {}
+unsafe impl PlainData for u32 {}
+unsafe impl PlainData for u64 {}
+unsafe impl PlainData for i8 {}
+unsafe impl PlainData for i16 {}
+unsafe impl PlainData for i32 {}
+unsafe impl PlainData for i64 {}
+unsafe impl PlainData for f32 {}
+unsafe impl PlainData for f64 {}
+unsafe impl<T: PlainData, const N: usize> PlainData for [T; N] {}
 
 impl From<ReadError> for std::io::Error {
     fn from(error: ReadError) -> std::io::Error {
@@ -130,7 +149,7 @@ impl<'a> RoseFileReader<'a> {
     }
 
     pub fn read_u64(&mut self) -> Result<u64, ReadError> {
-        if self.cursor.remaining() < 4 {
+        if self.cursor.remaining() < 8 {
             Err(ReadError::UnexpectedEof)
         } else {
             Ok(self.cursor.get_u64_le())
@@ -177,8 +196,11 @@ impl<'a> RoseFileReader<'a> {
         }
     }
 
-    pub fn read_vec<T: Copy>(&mut self, elements: usize) -> Result<Vec<T>, ReadError> {
-        let bytes_length = std::mem::size_of::<T>() * elements;
+    pub fn read_vec<T: PlainData>(&mut self, elements: usize) -> Result<Vec<T>, ReadError> {
+        // An element count too large to address cannot be in the file either.
+        let bytes_length = std::mem::size_of::<T>()
+            .checked_mul(elements)
+            .ok_or(ReadError::UnexpectedEof)?;
         if self.cursor.remaining() < bytes_length {
             Err(ReadError::UnexpectedEof)
         } else if elements == 0 {
@@ -186,18 +208,27 @@ impl<'a> RoseFileReader<'a> {
         } else {
             // Allocate Vec<T> directly to ensure proper alignment
             let mut result: Vec<T> = Vec::with_capacity(elements);
+            if bytes_length > 0 {
+                let start = self.cursor.position() as usize;
+                let bytes = &self.cursor.get_ref()[start..start + bytes_length];
+                // SAFETY: the capacity holds `elements` values, i.e. `bytes_length`
+                // bytes, and every byte is written before `set_len`. `T: PlainData`
+                // makes any bytes a valid `T`.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        bytes.as_ptr(),
+                        result.as_mut_ptr() as *mut u8,
+                        bytes_length,
+                    );
+                }
+                self.cursor.set_position((start + bytes_length) as u64);
+            }
+            // SAFETY: all `elements` values were initialised above (zero-sized
+            // values need no bytes).
             unsafe {
                 result.set_len(elements);
             }
-            
-            // Read bytes directly into the Vec<T>'s buffer
-            let bytes_slice = unsafe {
-                std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, bytes_length)
-            };
-            self.cursor
-                .read_exact(bytes_slice)
-                .map_err(|_| ReadError::UnexpectedEof)?;
-            
+
             Ok(result)
         }
     }
@@ -293,17 +324,16 @@ impl<'a> RoseFileReader<'a> {
     }
 
     pub fn read_null_terminated_bytes(&mut self) -> Result<&'a [u8], ReadError> {
+        let data: &'a [u8] = *self.cursor.get_ref();
         let start = self.cursor.position() as usize;
-        let end = self.cursor.get_ref().len() - 1;
 
-        for i in start..end {
-            if self.cursor.get_ref()[i] == 0 {
-                self.cursor.set_position((i + 1) as u64);
-                return Ok(&self.cursor.get_ref()[start..i]);
-            }
-        }
-
-        Err(ReadError::UnexpectedEof)
+        // The terminator may be the final byte; a cursor at or past the end has none.
+        let length = data
+            .get(start..)
+            .and_then(|rest| rest.iter().position(|&byte| byte == 0))
+            .ok_or(ReadError::UnexpectedEof)?;
+        self.cursor.set_position((start + length + 1) as u64);
+        Ok(&data[start..start + length])
     }
 
     pub fn read_fixed_length_string(&mut self, length: usize) -> Result<Cow<'a, str>, ReadError> {

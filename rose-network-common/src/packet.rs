@@ -1,10 +1,55 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use encoding_rs::WINDOWS_1252;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::io::Cursor;
 use std::num::NonZeroU16;
 use std::str;
 use thiserror::Error;
+
+/// Initial capacity of a `PacketWriter` buffer.
+const PACKET_BUFFER_CAPACITY: usize = 1024;
+
+/// Recycled buffers larger than this are dropped instead of kept in the pool.
+const PACKET_BUFFER_MAX_RECYCLE_CAPACITY: usize = 4 * PACKET_BUFFER_CAPACITY;
+
+/// Maximum number of idle buffers kept per thread.
+const PACKET_BUFFER_POOL_SIZE: usize = 16;
+
+thread_local! {
+    // Packets are built and written by the same network task, so a small
+    // per-thread pool lets each `PacketWriter` reuse the buffer of a packet
+    // that was already sent instead of allocating 1 KB for every packet.
+    static PACKET_BUFFER_POOL: RefCell<Vec<BytesMut>> = const { RefCell::new(Vec::new()) };
+}
+
+fn take_packet_buffer() -> BytesMut {
+    PACKET_BUFFER_POOL
+        .with(|pool| pool.borrow_mut().pop())
+        .unwrap_or_else(|| BytesMut::with_capacity(PACKET_BUFFER_CAPACITY))
+}
+
+/// Returns the buffer of a sent packet to the pool, if no other handle still
+/// references it.
+pub(crate) fn recycle_packet_buffer(data: Bytes) {
+    let Ok(mut buffer) = data.try_into_mut() else {
+        return;
+    };
+
+    if buffer.capacity() < PACKET_BUFFER_CAPACITY
+        || buffer.capacity() > PACKET_BUFFER_MAX_RECYCLE_CAPACITY
+    {
+        return;
+    }
+
+    buffer.clear();
+    PACKET_BUFFER_POOL.with(|pool| {
+        let mut pool = pool.borrow_mut();
+        if pool.len() < PACKET_BUFFER_POOL_SIZE {
+            pool.push(buffer);
+        }
+    });
+}
 
 #[derive(Debug, Error)]
 pub enum PacketError {
@@ -20,6 +65,11 @@ pub trait PacketCodec {
     fn decrypt_packet_header(&self, buffer: &mut BytesMut) -> usize;
     fn decrypt_packet_body(&self, buffer: &mut BytesMut) -> bool;
     fn encrypt_packet(&self, buffer: &mut BytesMut);
+
+    /// Largest encodable packet in bytes, including the 6 byte packet header.
+    fn max_packet_size(&self) -> usize {
+        u16::MAX as usize
+    }
 }
 
 pub struct Packet {
@@ -188,7 +238,7 @@ impl PacketWriter {
     pub fn new(command: u16) -> PacketWriter {
         PacketWriter {
             command,
-            data: BytesMut::with_capacity(1024),
+            data: take_packet_buffer(),
         }
     }
 

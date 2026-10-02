@@ -10,7 +10,9 @@ use rose_data::{
     NpcDatabaseOptions, NpcId, NpcMotionAction, NpcStoreTabData, NpcStoreTabId, SoundId,
     StringDatabase,
 };
-use rose_file_readers::{stb_column, ChrFile, StbFile, VfsPathBuf, VirtualFilesystem, ZmoFile};
+use rose_file_readers::{
+    stb_column, ChrFile, StbFile, VfsPathBuf, VirtualFilesystem, ZmoFile, ZmoReadOptions,
+};
 
 use crate::data_decoder::decode_item_base1000;
 
@@ -112,7 +114,15 @@ fn load_motion_file_data(
     let path = VfsPathBuf::new(path);
 
     if options.load_frame_data {
-        let zmo = vfs.read_file::<ZmoFile, _>(&path).ok()?;
+        // Only header fields and frame events are used: skip storing the keyframes.
+        let zmo = vfs
+            .read_file_with::<ZmoFile, _>(
+                &path,
+                &ZmoReadOptions {
+                    skip_animation: true,
+                },
+            )
+            .ok()?;
         Some(MotionFileData {
             path,
             duration: zmo.get_duration(),

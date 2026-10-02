@@ -22,14 +22,21 @@ pub fn ability_values_update_npc_system(
     game_data: Res<GameData>,
 ) {
     for mut npc in query.iter_mut() {
-        *npc.ability_values = game_data
-            .ability_value_calculator
-            .calculate_npc(
-                npc.npc.id,
-                npc.status_effects,
-                npc.ability_values.summon_owner_level,
-                npc.ability_values.summon_skill_level,
-            )
-            .unwrap();
+        // An NPC can be changed (e.g. AI TransformNpc) to an id with no NPC data: keep its
+        // current ability values instead of panicking the game world.
+        let Some(ability_values) = game_data.ability_value_calculator.calculate_npc(
+            npc.npc.id,
+            npc.status_effects,
+            npc.ability_values.summon_owner_level,
+            npc.ability_values.summon_skill_level,
+        ) else {
+            log::warn!(
+                "No NPC data for npc id {}, keeping previous ability values",
+                npc.npc.id.get()
+            );
+            continue;
+        };
+
+        *npc.ability_values = ability_values;
     }
 }

@@ -31,7 +31,7 @@ pub struct ZmsFile {
     pub uv2: Vec<[f32; 2]>,
     pub uv3: Vec<[f32; 2]>,
     pub uv4: Vec<[f32; 2]>,
-    pub indices: Vec<u16>,
+    pub indices: Vec<u32>,
     pub strip_indices: Vec<u16>,
     pub material_num_faces: Vec<u16>,
 }
@@ -56,6 +56,10 @@ impl RoseFile for ZmsFile {
             Self::read_version8(&mut reader, 7)
         } else if magic == "ZMS0008" {
             Self::read_version8(&mut reader, 8)
+        } else if magic == "ZMS0009" {
+            // Same layout as version 8, but vertex/triangle counts and
+            // indices are u32 instead of u16 (large meshes).
+            Self::read_version8(&mut reader, 9)
         } else {
             Err(anyhow!("Invalid ZMS magic header: {}", magic))
         }
@@ -63,6 +67,38 @@ impl RoseFile for ZmsFile {
 }
 
 impl ZmsFile {
+    /// Read only the mesh bounding box from raw file bytes, without parsing
+    /// vertices or indices. Used by server-side navigation baking to derive
+    /// obstacle footprints cheaply (one header read per unique mesh).
+    /// Returns `(bb_min, bb_max)` in game centimeters, matching IFO/ZSC space:
+    /// v5/v6 files store centimeters natively (the full reader divides by 100
+    /// to reach meters for rendering); v7+ files store meters, so the bounds
+    /// are scaled up by 100 here.
+    pub fn read_bounds(data: &[u8]) -> Option<([f32; 3], [f32; 3])> {
+        let mut reader = crate::reader::RoseFileReader::from(data);
+        let magic = reader.read_null_terminated_string().ok()?;
+        let magic: &str = magic.as_ref();
+        let (is_v56, valid) = match magic {
+            "ZMS0005" | "ZMS0006" => (true, true),
+            "ZMS0007" | "ZMS0008" | "ZMS0009" => (false, true),
+            _ => (false, false),
+        };
+        if !valid {
+            return None;
+        }
+        reader.read_u32().ok()?;
+        let bb_min = reader.read_vector3_f32().ok()?;
+        let bb_max = reader.read_vector3_f32().ok()?;
+        if is_v56 {
+            Some(([bb_min.x, bb_min.y, bb_min.z], [bb_max.x, bb_max.y, bb_max.z]))
+        } else {
+            Some((
+                [bb_min.x * 100.0, bb_min.y * 100.0, bb_min.z * 100.0],
+                [bb_max.x * 100.0, bb_max.y * 100.0, bb_max.z * 100.0],
+            ))
+        }
+    }
+
     fn read_version6(reader: &mut RoseFileReader, version: usize) -> Result<Self, anyhow::Error> {
         let format_bits = reader.read_u32()?;
         let format = ZmsFormatFlags::from_bits(format_bits)
@@ -204,9 +240,9 @@ impl ZmsFile {
         let mut indices = Vec::with_capacity(triangle_count);
         for _ in 0..triangle_count {
             let _vertex_id = reader.read_u32()?;
-            indices.push(reader.read_u32()? as u16);
-            indices.push(reader.read_u32()? as u16);
-            indices.push(reader.read_u32()? as u16);
+            indices.push(reader.read_u32()?);
+            indices.push(reader.read_u32()?);
+            indices.push(reader.read_u32()?);
         }
 
         let mut material_num_faces = Vec::new();
@@ -250,7 +286,12 @@ impl ZmsFile {
             bones.push(reader.read_u16()?);
         }
 
-        let vertex_count = reader.read_u16()? as usize;
+        let large = version >= 9;
+        let vertex_count = if large {
+            reader.read_u32()? as usize
+        } else {
+            reader.read_u16()? as usize
+        };
 
         let position = if format.contains(ZmsFormatFlags::POSITION) {
             reader.read_vec::<[f32; 3]>(vertex_count)?
@@ -333,8 +374,20 @@ impl ZmsFile {
             Vec::new()
         };
 
-        let triangle_count = reader.read_u16()? as usize;
-        let indices = reader.read_vec::<u16>(triangle_count * 3)?;
+        let triangle_count = if large {
+            reader.read_u32()? as usize
+        } else {
+            reader.read_u16()? as usize
+        };
+        let indices = if large {
+            reader.read_vec::<u32>(triangle_count * 3)?
+        } else {
+            reader
+                .read_vec::<u16>(triangle_count * 3)?
+                .into_iter()
+                .map(|i| i as u32)
+                .collect()
+        };
 
         let num_matids = reader.read_u16()? as usize;
         let material_num_faces = reader.read_vec::<u16>(num_matids)?;

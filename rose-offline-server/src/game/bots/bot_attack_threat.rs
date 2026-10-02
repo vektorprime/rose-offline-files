@@ -1,11 +1,14 @@
 use std::time::Duration;
 
-use bevy::prelude::{Commands, Component, Entity, Query, With};
+use bevy::{
+    prelude::{Commands, Component, Entity, Query, Res, With},
+    time::Time,
+};
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
 
 use crate::game::{
     bots::BotCombatTarget,
-    components::{Command, DamageSources, HealthPoints, NextCommand, Team},
+    components::{Command, DamageSource, DamageSources, HealthPoints, NextCommand, Team},
 };
 
 use super::BotQueryFilterAlive;
@@ -20,14 +23,16 @@ pub struct ThreatIsNotTarget {
 #[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct AttackThreat;
 
-fn find_highest_damage_source(damage_sources: &DamageSources) -> Option<Entity> {
-    let now = std::time::Instant::now();
-    let now_seconds = now.elapsed().as_secs_f64();
+/// `DamageSource::last_damage_seconds` is stamped by `damage_system` with
+/// `Time::elapsed_secs_f64`, so recency must be measured on the same clock.
+fn is_recent_damage(damage_source: &DamageSource, now_seconds: f64) -> bool {
+    now_seconds - damage_source.last_damage_seconds <= RECENT_ATTACK_TIME.as_secs_f64()
+}
 
+fn find_highest_damage_source(damage_sources: &DamageSources, now_seconds: f64) -> Option<Entity> {
     let mut highest_damage_source = None;
     for damage_source in damage_sources.damage_sources.iter() {
-        let time_since_last_attack = now_seconds - damage_source.last_damage_seconds;
-        if time_since_last_attack > RECENT_ATTACK_TIME.as_secs_f64() {
+        if !is_recent_damage(damage_source, now_seconds) {
             continue;
         }
 
@@ -48,9 +53,9 @@ pub fn score_threat_is_not_target(
         BotQueryFilterAlive,
     >,
     query_target: Query<(&Team, &HealthPoints)>,
+    time: Res<Time>,
 ) {
-    let now = std::time::Instant::now();
-    let now_seconds = now.elapsed().as_secs_f64();
+    let now_seconds = time.elapsed_secs_f64();
 
     for (scorer, &Actor(entity), mut score) in query.iter_mut() {
         score.set(0.0);
@@ -69,10 +74,9 @@ pub fn score_threat_is_not_target(
         let mut bot_combat_target_damage = 0;
 
         for damage_source in damage_sources.damage_sources.iter() {
-        let time_since_last_attack = now_seconds - damage_source.last_damage_seconds;
-        if time_since_last_attack > RECENT_ATTACK_TIME.as_secs_f64() {
-            continue;
-        }
+            if !is_recent_damage(damage_source, now_seconds) {
+                continue;
+            }
 
             if highest_damage_source.map_or(true, |(total_damage, _)| {
                 total_damage < damage_source.total_damage
@@ -119,9 +123,9 @@ pub fn action_attack_threat(
     mut query: Query<(&Actor, &mut ActionState), With<AttackThreat>>,
     query_entity: Query<(&Team, &DamageSources)>,
     query_target: Query<(&Team, &HealthPoints)>,
+    time: Res<Time>,
 ) {
-    let now = std::time::Instant::now();
-    let now_seconds = now.elapsed().as_secs_f64();
+    let now_seconds = time.elapsed_secs_f64();
 
     for (&Actor(entity), mut state) in query.iter_mut() {
         let Ok((team, damage_sources)) = query_entity.get(entity) else {
@@ -133,22 +137,9 @@ pub fn action_attack_threat(
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                let mut highest_damage_source = None;
-                for damage_source in damage_sources.damage_sources.iter() {
-        let time_since_last_attack = now_seconds - damage_source.last_damage_seconds;
-        if time_since_last_attack > RECENT_ATTACK_TIME.as_secs_f64() {
-            continue;
-        }
-
-                    if highest_damage_source.map_or(true, |(total_damage, _)| {
-                        total_damage < damage_source.total_damage
-                    }) {
-                        highest_damage_source =
-                            Some((damage_source.total_damage, damage_source.entity));
-                    }
-                }
-
-                if let Some((_, highest_damage_source_entity)) = highest_damage_source {
+                if let Some(highest_damage_source_entity) =
+                    find_highest_damage_source(damage_sources, now_seconds)
+                {
                     if let Ok((target_team, target_health_points)) =
                         query_target.get(highest_damage_source_entity)
                     {

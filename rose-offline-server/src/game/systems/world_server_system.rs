@@ -53,6 +53,7 @@ fn handle_world_connection_request(
 
     // Load character list, deleting any characters ready for deletion
     let mut character_list = CharacterList::default();
+    let character_count = account.character_names.len();
     account
         .character_names
         .retain(|name| match CharacterStorage::try_load(name) {
@@ -86,7 +87,10 @@ fn handle_world_connection_request(
                 false
             }
         });
-    account.save().ok();
+    // Retain only ever removes names, so the account only needs rewriting if it removed any
+    if account.character_names.len() != character_count {
+        account.save().ok();
+    }
 
     // Update entity
     commands
@@ -129,7 +133,15 @@ pub fn world_server_authentication_system(
                     };
                     world_client.server_message_tx.send(response).ok();
                 }
-                _ => panic!("Received unexpected client message {:?}", message),
+                _ => {
+                    // Removing WorldClient drops the server message sender, which ends the
+                    // connection task; its RemoveClient message then despawns this entity.
+                    warn!(
+                        "[WS] Disconnecting client which sent {:?} before authenticating",
+                        message
+                    );
+                    commands.entity(entity).remove::<WorldClient>();
+                }
             }
         }
     });
@@ -233,6 +245,22 @@ pub fn world_server_system(
                         .map_or_else(
                             || ServerMessage::DeleteCharacterError { name: name.clone() },
                             |character| {
+                                // The cached copy was loaded when the world client connected, so
+                                // reload it to avoid overwriting progress made since then.
+                                match CharacterStorage::try_load(&name) {
+                                    Ok(current_character) => *character = current_character,
+                                    Err(error) => {
+                                        log::error!(
+                                            "Failed to load character {} with error {:?}",
+                                            &name,
+                                            error
+                                        );
+                                        return ServerMessage::DeleteCharacterError {
+                                            name: name.clone(),
+                                        };
+                                    }
+                                }
+
                                 if is_delete {
                                     if character.delete_time.is_none() {
                                         character.delete_time = Some(CharacterDeleteTime::new());

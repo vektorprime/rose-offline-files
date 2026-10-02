@@ -1,7 +1,9 @@
 use bevy::{
     ecs::{query::QueryData, system::SystemParam},
     math::{Vec3, Vec3Swizzles},
-    prelude::{Commands, Entity, MessageWriter, Query, Res, ResMut, Without},
+    prelude::{
+        Commands, Component, Entity, Local, MessageWriter, Mut, Query, Res, ResMut, Without,
+    },
     time::Time,
 };
 use log::warn;
@@ -23,8 +25,8 @@ use crate::game::{
         Command, CommandData, Cooldowns, DamageSources, Dead, DrivingTime, DroppedItem, Equipment,
         EquipmentItemDatabase, ExperiencePoints, GameClient, HealthPoints, Hotbar, Inventory,
         ItemSlot, Level, ManaPoints, Money, MotionData, MoveMode, MoveSpeed, NextCommand, Party,
-        PartyMember, PartyMembership, PassiveRecoveryTime, Position, QuestState, SkillList,
-        SkillPoints, StatPoints, StatusEffects, StatusEffectsRegen, Team, WorldClient,
+        PartyMember, PartyMembership, PassiveRecoveryTime, Position, QuestState, ServerBoatState,
+        SkillList, SkillPoints, StatPoints, StatusEffects, StatusEffectsRegen, Team, WorldClient,
     },
     events::{
         BankEvent, ChatCommandEvent, ChatMessageEvent, ClanEvent, EquipmentEvent, ItemLifeEvent,
@@ -37,7 +39,31 @@ use crate::game::{
     },
     resources::{ClientEntityList, GameData, LoginTokens, ServerMessages, WorldRates, WorldTime},
     storage::{account::AccountStorage, bank::BankStorage, character::CharacterStorage},
+    systems::{
+        sail_max_allowed_distance_cm, sail_teleport_threshold_cm, OCEAN_ZONE_ID, SAIL_MAX_SPEED_MS,
+    },
 };
+
+/// Most MoveCollision reports coalesced into one tick; the rest wait for the next tick.
+const MAX_COALESCED_MOVE_COLLISIONS: usize = 256;
+
+/// A client message read from the channel while coalescing MoveCollision reports
+/// (the channel cannot be peeked), held back so it is still processed alone, on
+/// the next tick. Every system reading a game client's messages takes it first.
+#[derive(Component, Default)]
+pub struct PendingClientMessage(Option<ClientMessage>);
+
+/// Next message to process for a game client: a held back message comes before
+/// the channel.
+fn next_client_message(
+    game_client: &GameClient,
+    pending_client_message: &mut Option<Mut<PendingClientMessage>>,
+) -> Option<ClientMessage> {
+    match pending_client_message {
+        Some(pending) if pending.0.is_some() => pending.0.take(),
+        _ => game_client.client_message_rx.try_recv().ok(),
+    }
+}
 
 fn handle_game_connection_request(
     commands: &mut Commands,
@@ -257,14 +283,17 @@ fn handle_game_connection_request(
 
 pub fn game_server_authentication_system(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut GameClient), Without<CharacterInfo>>,
+    mut query: Query<
+        (Entity, &mut GameClient, Option<&mut PendingClientMessage>),
+        Without<CharacterInfo>,
+    >,
     mut query_world_client: Query<&mut WorldClient>,
     mut query_clans: Query<(Entity, &mut Clan)>,
     mut login_tokens: ResMut<LoginTokens>,
     game_data: Res<GameData>,
 ) {
-    query.iter_mut().for_each(|(entity, mut game_client)| {
-        if let Ok(message) = game_client.client_message_rx.try_recv() {
+    for (entity, mut game_client, mut pending) in query.iter_mut() {
+        if let Some(message) = next_client_message(&game_client, &mut pending) {
             match message {
                 ClientMessage::GameConnectionRequest {
                     login_token,
@@ -323,12 +352,12 @@ pub fn game_server_authentication_system(
                 _ => warn!("Received unexpected client message {:?}", message),
             }
         }
-    });
+    }
 }
 
 pub fn game_server_join_system(
     mut commands: Commands,
-    query: Query<
+    mut query: Query<
         (
             Entity,
             &GameClient,
@@ -338,6 +367,7 @@ pub fn game_server_join_system(
             &HealthPoints,
             &ManaPoints,
             &Position,
+            Option<&mut PendingClientMessage>,
         ),
         Without<ClientEntity>,
     >,
@@ -347,7 +377,7 @@ pub fn game_server_join_system(
     mut party_query: Query<(Entity, &mut Party)>,
     mut party_member_events: MessageWriter<PartyMemberEvent>,
 ) {
-    query.iter().for_each(
+    query.iter_mut().for_each(
         |(
             entity,
             game_client,
@@ -357,8 +387,9 @@ pub fn game_server_join_system(
             health_points,
             mana_points,
             position,
+            mut pending_client_message,
         )| {
-            if let Ok(message) = game_client.client_message_rx.try_recv() {
+            if let Some(message) = next_client_message(game_client, &mut pending_client_message) {
                 match message {
                     ClientMessage::JoinZoneRequest => {
                         if let Ok(entity_id) = client_entity_join_zone(
@@ -450,6 +481,8 @@ pub struct GameClientQuery<'w> {
     inventory: &'w mut Inventory,
     quest_state: &'w mut QuestState,
     move_mode: &'w mut MoveMode,
+    server_boat_state: Option<&'w mut ServerBoatState>,
+    pending_client_message: Option<&'w mut PendingClientMessage>,
 }
 
 #[derive(SystemParam)]
@@ -477,11 +510,45 @@ pub fn game_server_main_system(
     mut server_messages: ResMut<ServerMessages>,
     game_data: Res<GameData>,
     time: Res<Time>,
+    mut move_collision_positions: Local<Vec<Vec3>>,
 ) {
     for mut game_client in game_client_query.iter_mut() {
         let mut entity_commands = commands.entity(game_client.entity);
 
-        if let Ok(message) = game_client.game_client.client_message_rx.try_recv() {
+        let message = next_client_message(
+            game_client.game_client,
+            &mut game_client.pending_client_message,
+        );
+
+        // Only the newest of consecutive MoveCollision reports matters, and a
+        // client reporting every frame would otherwise build an ever-growing
+        // backlog at one message per tick. Collect the reports queued right
+        // behind this one; the first other message is held back for the next
+        // tick, so other commands are still handled one per tick.
+        move_collision_positions.clear();
+        if let Some(ClientMessage::MoveCollision { position }) = &message {
+            move_collision_positions.push(*position);
+            while move_collision_positions.len() < MAX_COALESCED_MOVE_COLLISIONS {
+                let Ok(next_message) = game_client.game_client.client_message_rx.try_recv() else {
+                    break;
+                };
+
+                if let ClientMessage::MoveCollision { position } = next_message {
+                    move_collision_positions.push(position);
+                    continue;
+                }
+
+                match game_client.pending_client_message.as_mut() {
+                    Some(pending_client_message) => pending_client_message.0 = Some(next_message),
+                    None => {
+                        entity_commands.insert(PendingClientMessage(Some(next_message)));
+                    }
+                }
+                break;
+            }
+        }
+
+        if let Some(message) = message {
             match message {
                 ClientMessage::Chat { text } => {
                     if text.chars().next().map_or(false, |c| c == '/') {
@@ -634,15 +701,20 @@ pub fn game_server_main_system(
                 }
                 ClientMessage::Logout | ClientMessage::ReturnToCharacterSelect => {
                     if let ClientMessage::ReturnToCharacterSelect = message {
-                        // Send ReturnToCharacterSelect via world_client
-                        world_client_query.iter().for_each(|world_client| {
-                            if world_client.login_token == game_client.game_client.login_token {
-                                world_client
-                                    .server_message_tx
-                                    .send(ServerMessage::ReturnToCharacterSelect)
-                                    .ok();
-                            }
-                        });
+                        // Send ReturnToCharacterSelect via world_client. A login token
+                        // has at most one world client, the one linked at game login.
+                        if let Some(world_client) = game_client
+                            .game_client
+                            .world_client_entity
+                            .and_then(|world_client_entity| {
+                                world_client_query.get(world_client_entity).ok()
+                            })
+                        {
+                            world_client
+                                .server_message_tx
+                                .send(ServerMessage::ReturnToCharacterSelect)
+                                .ok();
+                        }
                     }
 
                     game_client
@@ -1066,10 +1138,35 @@ pub fn game_server_main_system(
                         xp_sharing,
                     });
                 }
-                ClientMessage::MoveCollision { position } => {
+                ClientMessage::MoveCollision { .. } => {
+                    // move_collision_positions holds this report's position followed
+                    // by those of the reports coalesced behind it, oldest first.
+                    let Some(&last_position) = move_collision_positions.last() else {
+                        continue;
+                    };
+
+                    // While sailing, movement intent is managed through SailInput
+                    // reports. A MoveCollision here means the boat hit a wall or
+                    // land locally; accept the stopped position without rewriting
+                    // the command (which would break sailing state).
+                    if *game_client.move_mode == MoveMode::Sail {
+                        entity_commands
+                            .insert(Position::new(last_position, game_client.position.zone_id));
+                        if let Some(boat_state) = game_client.server_boat_state.as_mut() {
+                            boat_state.last_position = Vec3::new(
+                                last_position.x,
+                                last_position.y,
+                                boat_state.water_height_cm,
+                            );
+                            boat_state.last_report_time = time.elapsed_secs();
+                        }
+                        entity_commands.insert(NextCommand::with_stop(true));
+                        continue;
+                    }
+
                     // Server-authoritative position validation
                     // Validate position is within reasonable bounds from current position
-                    let current_pos = game_client.position.position;
+                    let mut current_pos = game_client.position.position;
                     let max_move_distance = 500.0; // Maximum allowed movement per tick (in cm)
 
                     // If we are actively pursuing a combat/interaction target, do not rewrite
@@ -1084,56 +1181,217 @@ pub fn game_server_main_system(
                             }
                     );
 
-                    // Check if the position change is physically possible
-                    let distance = position.xy().distance(current_pos.xy());
-
                     // Get the entity's move speed for validation
                     let max_speed = game_client.move_speed.speed;
                     let time_delta = 0.1; // Assume ~100ms tick rate
                     let max_allowed_distance = max_speed * time_delta * 1.5; // 50% tolerance for network lag
 
-                    // Also check for teleportation (instant large distance changes)
-                    let is_teleporting = distance > max_move_distance;
-                    let is_speed_hacking = distance > max_allowed_distance;
+                    // Validate the coalesced reports in order, each against the position
+                    // accepted before it, exactly as if they had arrived one per tick.
+                    // Only the final accepted position needs to be applied.
+                    let mut accepted_position = None;
+                    for &position in move_collision_positions.iter() {
+                        // Check if the position change is physically possible
+                        let distance = position.xy().distance(current_pos.xy());
 
-                    if is_teleporting {
-                        // Position is too far - reject and send adjustment
-                        server_messages.send_entity_message(
-                            game_client.client_entity,
-                            ServerMessage::AdjustPosition {
-                                entity_id: game_client.client_entity.id,
-                                position: current_pos,
-                            },
-                        );
-                        log::warn!(
-                            "[MOVE_VALIDATION] Entity {} rejected teleport attempt: distance={:.2}cm (max={:.2}cm)",
-                            game_client.client_entity.id.0,
-                            distance,
-                            max_move_distance
-                        );
-                    } else if is_speed_hacking {
-                        // Allow the movement but log warning for monitoring.
-                        // Update authoritative position only; avoid forcing a targetless Move command
-                        // while preserving attack/target pursuit state.
-                        log::warn!(
-                            "[MOVE_VALIDATION] Entity {} possible speed hack: distance={:.2}cm (allowed={:.2}cm)",
-                            game_client.client_entity.id.0,
-                            distance,
-                            max_allowed_distance
-                        );
-                        entity_commands
-                            .insert(Position::new(position, game_client.position.zone_id));
-                        if !preserve_targeted_pursuit {
-                            entity_commands.insert(NextCommand::with_move(position, None, None));
+                        // Also check for teleportation (instant large distance changes)
+                        let is_teleporting = distance > max_move_distance;
+                        let is_speed_hacking = distance > max_allowed_distance;
+
+                        if is_teleporting {
+                            // Position is too far - reject and send adjustment
+                            server_messages.send_entity_message(
+                                game_client.client_entity,
+                                ServerMessage::AdjustPosition {
+                                    entity_id: game_client.client_entity.id,
+                                    position: current_pos,
+                                },
+                            );
+                            log::warn!(
+                                "[MOVE_VALIDATION] Entity {} rejected teleport attempt: distance={:.2}cm (max={:.2}cm)",
+                                game_client.client_entity.id.0,
+                                distance,
+                                max_move_distance
+                            );
+                            continue;
                         }
-                    } else {
+
+                        if is_speed_hacking {
+                            // Allow the movement but log warning for monitoring.
+                            // Update authoritative position only; avoid forcing a targetless Move command
+                            // while preserving attack/target pursuit state.
+                            log::warn!(
+                                "[MOVE_VALIDATION] Entity {} possible speed hack: distance={:.2}cm (allowed={:.2}cm)",
+                                game_client.client_entity.id.0,
+                                distance,
+                                max_allowed_distance
+                            );
+                        }
+
                         // Position is valid - accept it
+                        current_pos = position;
+                        accepted_position = Some(position);
+                    }
+
+                    if let Some(position) = accepted_position {
                         entity_commands
                             .insert(Position::new(position, game_client.position.zone_id));
                         if !preserve_targeted_pursuit {
                             entity_commands.insert(NextCommand::with_move(position, None, None));
                         }
                     }
+                }
+                ClientMessage::SailInput {
+                    heading,
+                    speed,
+                    sail_trim,
+                    x,
+                    y,
+                    z,
+                    ..
+                } => {
+                    let Some(boat_state) = game_client.server_boat_state.as_mut() else {
+                        // Sailing input from a client that is not sailing: ignore.
+                        continue;
+                    };
+                    if *game_client.move_mode != MoveMode::Sail {
+                        continue;
+                    }
+
+                    let reported = Vec3::new(x, y, z);
+                    let horizontal_delta = reported.xy().distance(boat_state.last_position.xy());
+                    let elapsed_secs = time.elapsed_secs() - boat_state.last_report_time;
+                    boat_state.last_report_time = time.elapsed_secs();
+
+                    if horizontal_delta > sail_teleport_threshold_cm() {
+                        // Reject teleport attempts and correct the client.
+                        server_messages.send_entity_message(
+                            game_client.client_entity,
+                            ServerMessage::AdjustPosition {
+                                entity_id: game_client.client_entity.id,
+                                position: boat_state.last_position,
+                            },
+                        );
+                        log::warn!(
+                            "[SAIL_VALIDATION] Entity {} rejected sail teleport: distance={:.2}cm (max={:.2}cm)",
+                            game_client.client_entity.id.0,
+                            horizontal_delta,
+                            sail_teleport_threshold_cm()
+                        );
+                        continue;
+                    }
+
+                    let max_allowed = sail_max_allowed_distance_cm(elapsed_secs);
+                    if horizontal_delta > max_allowed {
+                        log::warn!(
+                            "[SAIL_VALIDATION] Entity {} possible speed hack: distance={:.2}cm (allowed={:.2}cm)",
+                            game_client.client_entity.id.0,
+                            horizontal_delta,
+                            max_allowed
+                        );
+                    }
+
+                    if speed > SAIL_MAX_SPEED_MS {
+                        log::warn!(
+                            "[SAIL_VALIDATION] Entity {} reported speed {:.2}m/s above max {:.2}m/s",
+                            game_client.client_entity.id.0,
+                            speed,
+                            SAIL_MAX_SPEED_MS
+                        );
+                    }
+
+                    boat_state.last_position = Vec3::new(
+                        reported.x,
+                        reported.y,
+                        boat_state.water_height_cm,
+                    );
+                    boat_state.heading = heading;
+                    boat_state.speed = speed.clamp(0.0, SAIL_MAX_SPEED_MS * 1.5);
+                    boat_state.sail_trim = sail_trim.clamp(0.0, std::f32::consts::PI);
+
+                    entity_commands.insert(Position::new(
+                        Vec3::new(reported.x, reported.y, boat_state.water_height_cm),
+                        game_client.position.zone_id,
+                    ));
+                    // Keep stale walk Move commands from dragging the boat.
+                    entity_commands.insert(NextCommand::with_stop(true));
+                }
+                ClientMessage::BoardBoat { x, y, z } => {
+                    // Validate boarding server-side. The client still activates
+                    // the boat locally for responsiveness; the server reply
+                    // (MoveToggle::Sail) confirms the mode.
+                    let already_sailing = *game_client.move_mode == MoveMode::Sail
+                        || game_client.server_boat_state.is_some();
+                    if already_sailing {
+                        continue;
+                    }
+                    if game_client.dead.is_some() {
+                        continue;
+                    }
+                    if matches!(
+                        game_client.command.command,
+                        CommandData::Attack { .. } | CommandData::CastSkill { .. }
+                    ) {
+                        continue;
+                    }
+                    if !matches!(
+                        *game_client.move_mode,
+                        MoveMode::Walk | MoveMode::Run
+                    ) {
+                        continue;
+                    }
+                    if game_client.position.zone_id.get() != OCEAN_ZONE_ID {
+                        continue;
+                    }
+
+                    let position = Vec3::new(x, y, z);
+                    *game_client.move_mode = MoveMode::Sail;
+                    entity_commands.insert((
+                        ServerBoatState::new(position),
+                        Position::new(position, game_client.position.zone_id),
+                        NextCommand::with_stop(true),
+                    ));
+                    server_messages.send_entity_message(
+                        game_client.client_entity,
+                        ServerMessage::MoveToggle {
+                            entity_id: game_client.client_entity.id,
+                            move_mode: MoveMode::Sail,
+                            run_speed: None,
+                        },
+                    );
+                    log::info!(
+                        "[SAIL] Entity {} boarded boat at ({:.0}, {:.0})",
+                        game_client.client_entity.id.0,
+                        x,
+                        y
+                    );
+                }
+                ClientMessage::DisembarkBoat { x, y, z } => {
+                    if *game_client.move_mode != MoveMode::Sail {
+                        continue;
+                    }
+
+                    let position = Vec3::new(x, y, z);
+                    *game_client.move_mode = MoveMode::Walk;
+                    entity_commands.remove::<ServerBoatState>();
+                    entity_commands.insert((
+                        Position::new(position, game_client.position.zone_id),
+                        NextCommand::with_stop(true),
+                    ));
+                    server_messages.send_entity_message(
+                        game_client.client_entity,
+                        ServerMessage::MoveToggle {
+                            entity_id: game_client.client_entity.id,
+                            move_mode: MoveMode::Walk,
+                            run_speed: None,
+                        },
+                    );
+                    log::info!(
+                        "[SAIL] Entity {} disembarked at ({:.0}, {:.0})",
+                        game_client.client_entity.id.0,
+                        x,
+                        y
+                    );
                 }
                 ClientMessage::CraftInsertGem {
                     equipment_index,

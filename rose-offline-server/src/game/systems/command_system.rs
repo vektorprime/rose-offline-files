@@ -8,13 +8,12 @@ use bevy::{
 };
 
 use rose_data::{
-    AbilityType, AmmoIndex, EquipmentIndex, ItemClass, SkillActionMode, SkillCooldown, SkillId,
-    SkillTargetFilter, SkillType, VehiclePartIndex,
+    AmmoIndex, EquipmentIndex, ItemClass, SkillActionMode, SkillType, VehiclePartIndex,
 };
 use rose_game_common::components::{CharacterGender, CharacterInfo};
 
 use crate::game::{
-    bundles::GLOBAL_SKILL_COOLDOWN,
+    bundles::{skill_target_filter_allows, skill_use_requirements_met},
     components::{
         AbilityValues, ClanMembership, ClientEntity, ClientEntitySector, ClientEntityType, Command,
         CommandCastSkillTarget, CommandData, Cooldowns, Equipment, ExperiencePoints, GameClient,
@@ -158,289 +157,6 @@ fn is_valid_pickup_target(target: &CommandPickupItemTargetQueryItem, position: &
     true
 }
 
-// Inline skill checking functions to avoid QueryData lifetime issues
-
-fn check_skill_cooldown(
-    cooldowns: Option<&Cooldowns>,
-    now: Instant,
-    skill_data: &rose_data::SkillData,
-) -> bool {
-    let Some(cooldowns) = cooldowns else {
-        return true;
-    };
-
-    if let Some(global) = cooldowns.skill_global {
-        if now - global < GLOBAL_SKILL_COOLDOWN {
-            return false;
-        }
-    }
-
-    match &skill_data.cooldown {
-        SkillCooldown::Skill { .. } => {
-            if let Some(cooldown_finished) = cooldowns.skill.get(&skill_data.id) {
-                if now < *cooldown_finished {
-                    return false;
-                }
-            }
-        }
-        SkillCooldown::Group { group, .. } => {
-            if let Some(cooldown_finished) = cooldowns
-                .skill_group
-                .get(group.get())
-                .and_then(|x: &Option<Instant>| x.as_ref())
-            {
-                if now < *cooldown_finished {
-                    return false;
-                }
-            }
-        }
-    }
-
-    true
-}
-
-fn check_move_mode(move_mode: &MoveMode, _skill_data: &rose_data::SkillData) -> bool {
-    !matches!(move_mode, MoveMode::Drive)
-}
-
-fn check_skill_target_filter(
-    caster_entity: Entity,
-    caster_team: &Team,
-    caster_clan: Option<&ClanMembership>,
-    caster_party: Option<&PartyMembership>,
-    target_entity: Entity,
-    target_team: &Team,
-    target_clan: Option<&ClanMembership>,
-    target_party: Option<&PartyMembership>,
-    target_hp: i32,
-    target_client_entity: &ClientEntity,
-    skill_data: &rose_data::SkillData,
-) -> bool {
-    let target_is_alive = target_hp > 0;
-    let target_is_caster = caster_entity == target_entity;
-
-    match skill_data.target_filter {
-        SkillTargetFilter::OnlySelf => target_is_alive && target_is_caster,
-        SkillTargetFilter::Group => {
-            let caster_party_id = caster_party.and_then(|p| p.party);
-            let target_party_id = target_party.and_then(|p| p.party);
-            target_is_alive
-                && (target_is_caster
-                    || (caster_party_id.is_some() && caster_party_id == target_party_id))
-        }
-        SkillTargetFilter::Guild => {
-            let caster_clan_id = caster_clan.and_then(|c| c.clan());
-            let target_clan_id = target_clan.and_then(|c| c.clan());
-            target_is_alive
-                && (target_is_caster
-                    || (caster_clan_id.is_some() && caster_clan_id == target_clan_id))
-        }
-        SkillTargetFilter::Allied => {
-            target_is_alive
-                && (caster_team.id == target_team.id
-                    || target_team.id == Team::DEFAULT_CHARACTER_TEAM_ID
-                    || target_team.id == Team::DEFAULT_NPC_TEAM_ID)
-        }
-        SkillTargetFilter::Monster => {
-            target_is_alive && matches!(target_client_entity.entity_type, ClientEntityType::Monster)
-        }
-        SkillTargetFilter::Enemy => {
-            target_is_alive
-                && target_team.id != Team::DEFAULT_NPC_TEAM_ID
-                && caster_team.id != target_team.id
-        }
-        SkillTargetFilter::EnemyCharacter => {
-            target_is_alive
-                && caster_team.id != target_team.id
-                && matches!(
-                    target_client_entity.entity_type,
-                    ClientEntityType::Character
-                )
-        }
-        SkillTargetFilter::Character => {
-            target_is_alive
-                && matches!(
-                    target_client_entity.entity_type,
-                    ClientEntityType::Character
-                )
-        }
-        SkillTargetFilter::CharacterOrMonster => {
-            target_is_alive
-                && matches!(
-                    target_client_entity.entity_type,
-                    ClientEntityType::Character | ClientEntityType::Monster
-                )
-        }
-        SkillTargetFilter::DeadAlliedCharacter => {
-            !target_is_alive
-                && !target_is_caster
-                && caster_team.id == target_team.id
-                && matches!(
-                    target_client_entity.entity_type,
-                    ClientEntityType::Character
-                )
-        }
-        SkillTargetFilter::EnemyMonster => {
-            target_is_alive
-                && caster_team.id != target_team.id
-                && matches!(target_client_entity.entity_type, ClientEntityType::Monster)
-        }
-    }
-}
-
-fn check_use_ability_value(
-    ability_values: &AbilityValues,
-    health_points: &HealthPoints,
-    mana_points: Option<&ManaPoints>,
-    experience_points: Option<&ExperiencePoints>,
-    inventory: Option<&Inventory>,
-    stamina: Option<&Stamina>,
-    equipment: Option<&Equipment>,
-    skill_data: &rose_data::SkillData,
-) -> bool {
-    for &(use_ability_type, mut use_ability_value) in skill_data.use_ability.iter() {
-        if use_ability_type == AbilityType::Mana {
-            let use_mana_rate = (100 - ability_values.get_save_mana()) as f32 / 100.0;
-            use_ability_value = (use_ability_value as f32 * use_mana_rate) as i32;
-        }
-
-        let ability_value = match use_ability_type {
-            AbilityType::Level => ability_values.level,
-            AbilityType::Strength => ability_values.strength,
-            AbilityType::Dexterity => ability_values.dexterity,
-            AbilityType::Intelligence => ability_values.intelligence,
-            AbilityType::Concentration => ability_values.concentration,
-            AbilityType::Charm => ability_values.charm,
-            AbilityType::Sense => ability_values.sense,
-            AbilityType::Health => health_points.hp,
-            AbilityType::Mana => mana_points.map_or(0, |mp| mp.mp),
-            AbilityType::Experience => experience_points
-                .map_or(0, |xp| xp.xp)
-                .try_into()
-                .unwrap_or(i32::MAX),
-            AbilityType::Money => inventory
-                .map_or(0, |inv| inv.money.0)
-                .try_into()
-                .unwrap_or(i32::MAX),
-            AbilityType::Stamina => stamina
-                .map_or(0, |s| s.stamina)
-                .try_into()
-                .unwrap_or(i32::MAX),
-            AbilityType::Fuel => equipment.map_or(0, |eq| {
-                eq.get_vehicle_item(VehiclePartIndex::Engine)
-                    .map_or(0, |item| item.life as i32)
-            }),
-            invalid => {
-                log::warn!(
-                    "SkillId: {} requires invalid use_ability type {:?}",
-                    skill_data.id.get(),
-                    invalid
-                );
-                -999
-            }
-        };
-
-        if ability_value < use_ability_value {
-            return false;
-        }
-    }
-
-    true
-}
-
-fn check_equipment(
-    game_data: &GameData,
-    equipment: Option<&Equipment>,
-    skill_data: &rose_data::SkillData,
-) -> bool {
-    let Some(equipment) = equipment else {
-        return true;
-    };
-
-    if skill_data.required_equipment_class.is_empty() {
-        return true;
-    }
-
-    let weapon_class = equipment
-        .get_equipment_item(EquipmentIndex::Weapon)
-        .and_then(|item| game_data.items.get_base_item(item.item))
-        .map(|item_data| item_data.class);
-    let sub_weapon_class = equipment
-        .get_equipment_item(EquipmentIndex::SubWeapon)
-        .and_then(|item| game_data.items.get_base_item(item.item))
-        .map(|item_data| item_data.class);
-
-    for &required_equipment_class in skill_data.required_equipment_class.iter() {
-        if weapon_class == Some(required_equipment_class) {
-            return true;
-        }
-
-        if sub_weapon_class == Some(required_equipment_class) {
-            return true;
-        }
-    }
-
-    false
-}
-
-/// Check if a skill can be used by the caster (inline version to avoid QueryData lifetime issues)
-fn skill_can_use_inline(
-    now: Instant,
-    game_data: &GameData,
-    client_entity: &ClientEntity,
-    ability_values: &AbilityValues,
-    health_points: &HealthPoints,
-    move_mode: &MoveMode,
-    team: &Team,
-    cooldowns: Option<&Cooldowns>,
-    equipment: Option<&Equipment>,
-    experience_points: Option<&ExperiencePoints>,
-    inventory: Option<&Inventory>,
-    mana_points: Option<&ManaPoints>,
-    party_membership: Option<&PartyMembership>,
-    clan_membership: Option<&ClanMembership>,
-    stamina: Option<&Stamina>,
-    skill_data: &rose_data::SkillData,
-) -> bool {
-    if !client_entity.is_character() {
-        // We only check use requirements for characters
-        return true;
-    }
-
-    if !check_skill_cooldown(cooldowns, now, skill_data) {
-        return false;
-    }
-
-    // check_not_disabled - TODO: Check not muted / sleep / fainted / stunned
-
-    // check_weight - TODO: Check weight not too heavy to use skills (110%)
-
-    if !check_move_mode(move_mode, skill_data) {
-        return false;
-    }
-
-    // check_summon_points - TODO
-
-    if !check_use_ability_value(
-        ability_values,
-        health_points,
-        mana_points,
-        experience_points,
-        inventory,
-        stamina,
-        equipment,
-        skill_data,
-    ) {
-        return false;
-    }
-
-    if !check_equipment(game_data, equipment, skill_data) {
-        return false;
-    }
-
-    true
-}
-
 pub fn command_system(
     mut commands: Commands,
     mut query_command_entity: Query<QueryCommandEntity>,
@@ -493,6 +209,11 @@ pub fn command_system(
         if !command_entity.next_command.has_sent_server_message
             && command_entity.next_command.command.is_some()
         {
+            // A cast that cannot start yet is not announced: it stays queued unsent and is
+            // re-checked next tick, or refused by the NextCommand handling below (stop +
+            // StopMoveEntity) once the current command completes.
+            let mut defer_server_message = false;
+
             // Send any server message required for update client next command
             match command_entity.next_command.command.as_mut().unwrap() {
                 CommandData::Die { .. } => {
@@ -581,14 +302,18 @@ pub fn command_system(
                     ref skill_target,
                     cast_motion_id,
                     ..
-                } => {
-                    // Inline skill validation to avoid QueryData lifetime issues
+                } => 'cast_skill: {
+                    // Shared skill validation (bots pick casts with the same checks).
+                    // Refusals defer instead of `continue`: skipping the rest of this entity's
+                    // processing froze its current command and kept the cast queued forever.
                     let Some(skill_data) = game_data.skills.get_skill(skill_id) else {
-                        continue;
+                        defer_server_message = true;
+                        break 'cast_skill;
                     };
 
                     let Ok(skill_caster) = query_skill_caster.get(command_entity.entity) else {
-                        continue;
+                        defer_server_message = true;
+                        break 'cast_skill;
                     };
 
                     let (
@@ -608,25 +333,23 @@ pub fn command_system(
                         caster_stamina,
                     ) = skill_caster;
 
-                    if !skill_can_use_inline(
+                    if !skill_use_requirements_met(
                         now,
                         &game_data,
                         caster_client_entity,
                         caster_ability_values,
                         caster_health_points,
                         caster_move_mode,
-                        caster_team,
                         caster_cooldowns,
                         caster_equipment,
                         caster_experience_points,
                         caster_inventory,
                         caster_mana_points,
-                        caster_party_membership,
-                        caster_clan_membership,
                         caster_stamina,
                         skill_data,
                     ) {
-                        continue;
+                        defer_server_message = true;
+                        break 'cast_skill;
                     }
 
                     let can_cast = match skill_target {
@@ -639,7 +362,7 @@ pub fn command_system(
                                     target_team,
                                     target_clan_membership,
                                     target_party_membership,
-                                )) => check_skill_target_filter(
+                                )) => skill_target_filter_allows(
                                     caster_entity,
                                     caster_team,
                                     caster_clan_membership,
@@ -666,7 +389,7 @@ pub fn command_system(
                                     | SkillType::SelfStateDuration
                                     | SkillType::SummonPet
                                     | SkillType::SelfDamage
-                            ) || check_skill_target_filter(
+                            ) || skill_target_filter_allows(
                                 caster_entity,
                                 caster_team,
                                 caster_clan_membership,
@@ -740,7 +463,9 @@ pub fn command_system(
                 }
             }
 
-            command_entity.next_command.has_sent_server_message = true;
+            if !defer_server_message {
+                command_entity.next_command.has_sent_server_message = true;
+            }
         }
 
         command_entity.command.duration += time.delta();
@@ -918,7 +643,16 @@ pub fn command_system(
                     .xy()
                     .distance(destination.xy());
                 if distance < 0.1 {
+                    let is_untargeted_move = target.is_none();
                     *command_entity.command = Command::with_stop();
+
+                    // An untargeted move is finished once its destination is reached. Leaving it
+                    // queued re-ran it every tick, which reset the Stop duration so is_stop_for()
+                    // never became true after a plain move. Targeted moves stay queued so the
+                    // entity keeps following its target.
+                    if is_untargeted_move {
+                        *command_entity.next_command = NextCommand::default();
+                    }
                 } else {
                     *command_entity.command =
                         Command::with_move(*destination, *target, *command_move_mode);
@@ -956,20 +690,8 @@ pub fn command_system(
             &mut CommandData::Attack {
                 target: target_entity,
             } => {
-                log::info!(
-                    "[COMBAT_DEBUG] Processing Attack command: entity={:?}, target={:?}, client_entity_id={:?}",
-                    command_entity.entity,
-                    target_entity,
-                    command_entity.client_entity.id
-                );
-
                 let Some(target) = query_attack_target.get(target_entity).ok() else {
                     // Cannot attack target, cancel command.
-                    log::warn!(
-                        "[COMBAT_DEBUG] Attack target missing required components: entity={:?}, target={:?}",
-                        command_entity.entity,
-                        target_entity
-                    );
                     command_stop(
                         &mut command_entity.command,
                         command_entity.client_entity,
@@ -982,16 +704,6 @@ pub fn command_system(
 
                 if !is_valid_attack_target(&target, command_entity.position, command_entity.team) {
                     // Cannot attack target, cancel command.
-                    log::warn!(
-                        "[COMBAT_DEBUG] Attack target failed validation: attacker={:?}, target={:?}, attacker_team={}, target_team={}, attacker_zone={:?}, target_zone={:?}, target_hp={}",
-                        command_entity.entity,
-                        target_entity,
-                        command_entity.team.id,
-                        target.team.id,
-                        command_entity.position.zone_id,
-                        target.position.zone_id,
-                        target.health_points.hp
-                    );
                     command_stop(
                         &mut command_entity.command,
                         command_entity.client_entity,
@@ -1008,13 +720,6 @@ pub fn command_system(
                     .position
                     .xy()
                     .distance(target.position.position.xy());
-
-                log::info!(
-                    "[COMBAT_DEBUG] Attack range check: attack_range={}, distance={}, in_range={}",
-                    attack_range,
-                    distance,
-                    attack_range >= distance
-                );
 
                 // Attack only when actually within attack range. The client plays the
                 // attack animation only when within the same range, so attacking from
@@ -1039,39 +744,28 @@ pub fn command_system(
                         target.position.position
                     };
 
-                    // Not in range, set current command to move AND update next_command
-                    // so the bot actually moves instead of re-processing Attack every frame
+                    // Not in range, chase with a server-side move. The Attack stays queued in
+                    // next_command so the attack starts once in range.
                     *command_entity.command = Command::with_move(
                         move_destination,
                         Some(target_entity),
                         Some(MoveMode::Run),
                     );
-                    // Keep the Attack command in next_command so bot attacks when in range
-                    // but mark it as needing to send server message so Move is broadcast
-                    command_entity.next_command.has_sent_server_message = false;
+                    // Do not re-announce: clients got AttackEntity when this Attack was queued
+                    // (or derive it themselves after a skill) and chase locally until the
+                    // in-range AttackEntity below. Clearing has_sent_server_message here
+                    // re-broadcast an identical AttackEntity every tick of the chase.
                     continue;
                 }
 
                 let mut cancel_attack = false;
-                let mut cancel_no_attack_motion = false;
-                let mut cancel_broken_vehicle_engine = false;
-                let mut cancel_broken_vehicle_arms = false;
-                let mut cancel_broken_weapon = false;
-                let mut cancel_not_enough_ammo = false;
 
                 let (attack_duration, hit_count) =
                     if let Some(attack_motion) = command_entity.motion_data.get_attack() {
-                        log::info!(
-                            "[COMBAT_DEBUG] Attack motion found: duration={:?}, hit_count={}",
-                            attack_motion.duration,
-                            attack_motion.total_attack_frames
-                        );
                         (attack_motion.duration, attack_motion.total_attack_frames)
                     } else {
                         // No attack animation, cancel attack
-                        log::warn!("[COMBAT_DEBUG] No attack motion found, cancelling attack!");
                         cancel_attack = true;
-                        cancel_no_attack_motion = true;
                         (Duration::ZERO, 0)
                     };
 
@@ -1083,7 +777,6 @@ pub fn command_system(
                         {
                             // Vehicle engine is broken, cancel attack
                             cancel_attack = true;
-                            cancel_broken_vehicle_engine = true;
                         }
 
                         if equipment
@@ -1092,7 +785,6 @@ pub fn command_system(
                         {
                             // Vehicle weapon item is broken, cancel attack
                             cancel_attack = true;
-                            cancel_broken_vehicle_arms = true;
                         }
                     }
                 } else {
@@ -1103,7 +795,6 @@ pub fn command_system(
                         {
                             // Weapon item is broken, cancel attack
                             cancel_attack = true;
-                            cancel_broken_weapon = true;
                         }
                     }
 
@@ -1133,7 +824,6 @@ pub fn command_system(
                                     } else {
                                         // Not enough ammo, cancel attack
                                         cancel_attack = true;
-                                        cancel_not_enough_ammo = true;
                                     }
                                 }
                             }
@@ -1143,17 +833,6 @@ pub fn command_system(
 
                 if cancel_attack {
                     // Attack requirements not met, cancel attack
-                    log::warn!(
-                        "[COMBAT_DEBUG] Attack cancelled: entity={:?}, target={:?}, no_attack_motion={}, broken_vehicle_engine={}, broken_vehicle_arms={}, broken_weapon={}, not_enough_ammo={}, hit_count={}",
-                        command_entity.entity,
-                        target_entity,
-                        cancel_no_attack_motion,
-                        cancel_broken_vehicle_engine,
-                        cancel_broken_vehicle_arms,
-                        cancel_broken_weapon,
-                        cancel_not_enough_ammo,
-                        hit_count,
-                    );
                     command_stop(
                         &mut command_entity.command,
                         command_entity.client_entity,
@@ -1204,15 +883,6 @@ pub fn command_system(
                     hit_count as i32,
                 );
 
-                // DEBUG: Log damage event being sent
-                log::info!(
-                    "[COMBAT_DEBUG] Sending DamageEvent: attacker={:?}, defender={:?}, damage={}, is_critical={}",
-                    command_entity.entity,
-                    target_entity,
-                    damage.amount,
-                    damage.is_critical
-                );
-
                 // Send damage event to damage system
                 damage_events.write(DamageEvent::Attack {
                     attacker: command_entity.entity,
@@ -1227,7 +897,7 @@ pub fn command_system(
                 cast_motion_id,
                 action_motion_id,
             } => {
-                // Inline skill validation to avoid QueryData lifetime issues
+                // Shared skill validation (bots pick casts with the same checks)
                 let Some(skill_data) = game_data.skills.get_skill(skill_id) else {
                     // Cannot use skill, cancel command.
                     command_stop(
@@ -1269,21 +939,18 @@ pub fn command_system(
                     caster_stamina,
                 ) = skill_caster;
 
-                if !skill_can_use_inline(
+                if !skill_use_requirements_met(
                     now,
                     &game_data,
                     caster_client_entity,
                     caster_ability_values,
                     caster_health_points,
                     caster_move_mode,
-                    caster_team,
                     caster_cooldowns,
                     caster_equipment,
                     caster_experience_points,
                     caster_inventory,
                     caster_mana_points,
-                    caster_party_membership,
-                    caster_clan_membership,
                     caster_stamina,
                     skill_data,
                 ) {
@@ -1309,7 +976,7 @@ pub fn command_system(
                                 target_team,
                                 target_clan_membership,
                                 target_party_membership,
-                            )) => check_skill_target_filter(
+                            )) => skill_target_filter_allows(
                                 caster_entity,
                                 caster_team,
                                 caster_clan_membership,
@@ -1336,7 +1003,7 @@ pub fn command_system(
                                 | SkillType::SelfStateDuration
                                 | SkillType::SummonPet
                                 | SkillType::SelfDamage
-                        ) || check_skill_target_filter(
+                        ) || skill_target_filter_allows(
                             caster_entity,
                             caster_team,
                             caster_clan_membership,

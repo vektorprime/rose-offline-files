@@ -144,11 +144,14 @@ pub struct LlmBuddyBotConfig {
 ///
 /// This function creates a complete bot entity with all necessary components
 /// for LLM control through the REST API.
+///
+/// Also returns the ability values the bot was spawned with, as the entity is only
+/// spawned once `commands` are applied and cannot be queried before then.
 pub fn create_llm_buddy_bot(
     commands: &mut Commands,
     game_data: &GameData,
     config: LlmBuddyBotConfig,
-) -> Entity {
+) -> (Entity, AbilityValues) {
     // Get the bot build
     let bot_build = get_bot_build(config.build_type);
 
@@ -201,7 +204,7 @@ pub fn create_llm_buddy_bot(
             llm_buddy_bot,
             // Character bundle
             CharacterBundle {
-                ability_values,
+                ability_values: ability_values.clone(),
                 basic_stats: bot_data.basic_stats,
                 bank: Default::default(),
                 cooldowns: Default::default(),
@@ -250,7 +253,7 @@ pub fn create_llm_buddy_bot(
         entity
     );
 
-    entity
+    (entity, ability_values)
 }
 
 /// Create the character storage data for a bot
@@ -499,7 +502,6 @@ pub fn process_llm_bot_creations_system(
     mut client_entity_list: ResMut<ClientEntityList>,
     player_query: Query<(Entity, &Position, &CharacterInfo, &ClientEntity), Without<LlmBuddyBot>>,
     mut party_events: MessageWriter<PartyEvent>,
-    ability_values_query: Query<&AbilityValues, With<LlmBuddyBot>>,
 ) {
     // Note: Command receiving has been moved to process_llm_bot_commands_system
     // to avoid race conditions where this system consumes and drops non-CreateBot commands.
@@ -584,7 +586,7 @@ pub fn process_llm_bot_creations_system(
             };
 
             // Create the bot entity
-            let entity = create_llm_buddy_bot(&mut commands, &game_data, config);
+            let (entity, ability_values) = create_llm_buddy_bot(&mut commands, &game_data, config);
 
             // Register the bot with ClientEntityList so it's visible to other clients
             let position = Position::new(spawn_position, zone_id);
@@ -647,18 +649,17 @@ pub fn process_llm_bot_creations_system(
                     z: spawn_position.z,
                 },
             );
-            // Update storage with actual max HP/MP from ability values
-            if let Ok(ability_values) = ability_values_query.get(entity) {
-                bot_storage.health = VitalPoints {
-                    current: ability_values.max_health,
-                    max: ability_values.max_health,
-                };
-                bot_storage.mana = VitalPoints {
-                    current: ability_values.max_mana,
-                    max: ability_values.max_mana,
-                };
-            }
-            
+            // Update storage with actual max HP/MP from the ability values the bot was spawned
+            // with (its AbilityValues component cannot be queried until commands are applied)
+            bot_storage.health = VitalPoints {
+                current: ability_values.max_health,
+                max: ability_values.max_health,
+            };
+            bot_storage.mana = VitalPoints {
+                current: ability_values.max_mana,
+                max: ability_values.max_mana,
+            };
+
             if let Err(e) = bot_storage.save() {
                 log::error!("Failed to save LLM buddy bot '{}' to storage: {:?}", name_for_storage, e);
             } else {

@@ -446,7 +446,12 @@ fn equip_vehicle_from_inventory(
     }
 
     // P3-8: Do not allow mixing of cart / castle gear parts
-    if !check_vehicle_type_consistency(&entity.equipment, item_data.vehicle_type) {
+    if !check_vehicle_type_consistency(
+        game_data,
+        &entity.equipment,
+        vehicle_part_index,
+        item_data.vehicle_type,
+    ) {
         return Err(EquipItemError::MixedVehicleTypes);
     }
 
@@ -648,45 +653,27 @@ fn verify_ammo_type_matches_weapon(
 
 /// P3-8: Check that all equipped vehicle parts are of the same vehicle type (Cart or CastleGear)
 /// Returns true if the new vehicle type is compatible with existing parts, or if no parts are equipped
-/// P3-8: Check that all equipped vehicle parts are of the same vehicle type (Cart or CastleGear)
-/// Returns true if the new vehicle type is compatible with existing parts, or if no parts are equipped
-fn check_vehicle_type_consistency(equipment: &Equipment, new_vehicle_type: VehicleType) -> bool {
-    // Check all equipped vehicle parts to ensure type consistency
-    // We iterate through all vehicle slots and check if any existing part
-    // has a different vehicle type than the one being equipped
+fn check_vehicle_type_consistency(
+    game_data: &GameData,
+    equipment: &Equipment,
+    vehicle_part_index: VehiclePartIndex,
+    new_vehicle_type: VehicleType,
+) -> bool {
     for (part_index, vehicle_item) in equipment.equipped_vehicle.iter() {
-        if let Some(item) = vehicle_item {
-            // Determine the vehicle type based on the item class
-            // Cart parts: CartBody, CartEngine, CartWheels, CartAccessory
-            // CastleGear parts: CastleGearBody, CastleGearEngine, CastleGearLeg, CastleGearWeapon
-            let existing_type = match part_index {
-                VehiclePartIndex::Body | VehiclePartIndex::Engine => {
-                    // For body and engine, we can determine type from the item reference
-                    // This is a simplified check - in practice, you'd look up the item in the database
-                    // For now, we use a heuristic based on the item number ranges or other properties
-                    // Since we don't have game_data access, we'll use the part index as a proxy
-                    // This is a placeholder that should be enhanced with actual item data lookup
-                    None // We can't determine type without game_data
-                }
-                VehiclePartIndex::Leg => {
-                    // Legs are CastleGear specific
-                    Some(VehicleType::CastleGear)
-                }
-                VehiclePartIndex::Arms => {
-                    // Arms are CastleGear specific (weapons)
-                    Some(VehicleType::CastleGear)
-                }
-            };
+        // The item currently in the target slot is swapped back into the inventory,
+        // so it must not block equipping a direct replacement
+        if part_index == vehicle_part_index {
+            continue;
+        }
 
-            // If we determined the type and it doesn't match, reject
-            if let Some(existing) = existing_type {
-                if existing != new_vehicle_type {
+        if let Some(item) = vehicle_item {
+            if let Some(item_data) = game_data.items.get_vehicle_item(item.item.item_number) {
+                if item_data.vehicle_type != new_vehicle_type {
                     return false;
                 }
             }
         }
     }
 
-    // If no conflicting parts found, allow the equip
     true
 }

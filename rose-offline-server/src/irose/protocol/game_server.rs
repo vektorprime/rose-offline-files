@@ -257,6 +257,41 @@ impl GameServer {
                     }
                 }
             }
+            Some(ClientPackets::SailInput) => {
+                let packet = PacketClientSailInput::try_from(packet)?;
+                client
+                    .client_message_tx
+                    .send(ClientMessage::SailInput {
+                        rudder: decode_input_f32(packet.rudder),
+                        throttle: decode_input_f32(packet.throttle),
+                        heading: packet.heading,
+                        speed: packet.speed,
+                        sail_trim: packet.sail_trim,
+                        x: packet.x,
+                        y: packet.y,
+                        z: packet.z,
+                    })?;
+            }
+            Some(ClientPackets::BoardBoat) => {
+                let packet = PacketClientBoardBoat::try_from(packet)?;
+                client
+                    .client_message_tx
+                    .send(ClientMessage::BoardBoat {
+                        x: packet.x,
+                        y: packet.y,
+                        z: packet.z,
+                    })?;
+            }
+            Some(ClientPackets::DisembarkBoat) => {
+                let packet = PacketClientDisembarkBoat::try_from(packet)?;
+                client
+                    .client_message_tx
+                    .send(ClientMessage::DisembarkBoat {
+                        x: packet.x,
+                        y: packet.y,
+                        z: packet.z,
+                    })?;
+            }
             Some(ClientPackets::Emote) => {
                 let packet = PacketClientEmote::try_from(packet)?;
                 client.client_message_tx.send(ClientMessage::UseEmote {
@@ -448,7 +483,7 @@ impl GameServer {
             ServerMessage::ConnectionRequestSuccess { packet_sequence_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketConnectionReply {
+                    .write_packet_buffered(Packet::from(&PacketConnectionReply {
                         result: ConnectResult::Ok,
                         packet_sequence_id,
                         pay_flags: 0xff,
@@ -458,7 +493,7 @@ impl GameServer {
             ServerMessage::ConnectionRequestError { .. } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketConnectionReply {
+                    .write_packet_buffered(Packet::from(&PacketConnectionReply {
                         result: ConnectResult::Failed,
                         packet_sequence_id: 0,
                         pay_flags: 0,
@@ -468,7 +503,7 @@ impl GameServer {
             ServerMessage::CharacterData { data } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerSelectCharacter {
+                    .write_packet_buffered(Packet::from(&PacketServerSelectCharacter {
                         character_info: data.character_info,
                         position: data.position,
                         zone_id: data.zone_id,
@@ -490,7 +525,7 @@ impl GameServer {
             ServerMessage::CharacterDataItems { data } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerCharacterInventory {
+                    .write_packet_buffered(Packet::from(&PacketServerCharacterInventory {
                         inventory: data.inventory,
                         equipment: data.equipment,
                     }))
@@ -499,7 +534,7 @@ impl GameServer {
             ServerMessage::CharacterDataQuest { quest_state } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerCharacterQuestData {
+                    .write_packet_buffered(Packet::from(&PacketServerCharacterQuestData {
                         quest_state: *quest_state,
                     }))
                     .await?;
@@ -518,7 +553,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerJoinZone {
+                    .write_packet_buffered(Packet::from(&PacketServerJoinZone {
                         entity_id,
                         experience_points,
                         team,
@@ -543,7 +578,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerMoveEntity {
+                    .write_packet_buffered(Packet::from(&PacketServerMoveEntity {
                         entity_id,
                         target_entity_id,
                         distance,
@@ -564,7 +599,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerAttackEntity {
+                    .write_packet_buffered(Packet::from(&PacketServerAttackEntity {
                         entity_id,
                         target_entity_id,
                         distance,
@@ -585,7 +620,7 @@ impl GameServer {
                 None => {
                     client
                         .connection
-                        .write_packet(Packet::from(&PacketServerDamageEntity {
+                        .write_packet_buffered(Packet::from(&PacketServerDamageEntity {
                             attacker_entity_id,
                             defender_entity_id,
                             damage,
@@ -597,7 +632,7 @@ impl GameServer {
                 Some((skill_id, caster_intelligence)) => {
                     client
                         .connection
-                        .write_packet(Packet::from(&PacketServerApplySkillDamage {
+                        .write_packet_buffered(Packet::from(&PacketServerApplySkillDamage {
                             entity_id: defender_entity_id,
                             caster_entity_id: attacker_entity_id,
                             caster_intelligence,
@@ -613,7 +648,7 @@ impl GameServer {
             ServerMessage::StopMoveEntity { entity_id, x, y, z } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerStopMoveEntity {
+                    .write_packet_buffered(Packet::from(&PacketServerStopMoveEntity {
                         entity_id,
                         x,
                         y,
@@ -631,7 +666,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerTeleport {
+                    .write_packet_buffered(Packet::from(&PacketServerTeleport {
                         entity_id,
                         zone_id,
                         x,
@@ -647,19 +682,19 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerLocalChat { entity_id, text }))
+                    .write_packet_buffered(Packet::from(&PacketServerLocalChat { entity_id, text }))
                     .await?;
             }
             ServerMessage::ShoutChat { ref name, ref text } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerShoutChat { name, text }))
+                    .write_packet_buffered(Packet::from(&PacketServerShoutChat { name, text }))
                     .await?;
             }
             ServerMessage::AnnounceChat { ref name, ref text } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerAnnounceChat {
+                    .write_packet_buffered(Packet::from(&PacketServerAnnounceChat {
                         name: name.as_deref(),
                         text,
                     }))
@@ -668,13 +703,13 @@ impl GameServer {
             ServerMessage::Whisper { ref from, ref text } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerWhisper { from, text }))
+                    .write_packet_buffered(Packet::from(&PacketServerWhisper { from, text }))
                     .await?;
             }
             ServerMessage::SpawnEntityCharacter { data } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerSpawnEntityCharacter {
+                    .write_packet_buffered(Packet::from(&PacketServerSpawnEntityCharacter {
                         character_info: data.character_info,
                         spawn_command_state: data.spawn_command_state,
                         entity_id: data.entity_id,
@@ -701,7 +736,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerSpawnEntityItemDrop {
+                    .write_packet_buffered(Packet::from(&PacketServerSpawnEntityItemDrop {
                         entity_id,
                         dropped_item,
                         position,
@@ -723,7 +758,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerSpawnEntityNpc {
+                    .write_packet_buffered(Packet::from(&PacketServerSpawnEntityNpc {
                         entity_id,
                         npc,
                         direction,
@@ -732,7 +767,7 @@ impl GameServer {
                         health,
                         spawn_command_state: command,
                         move_mode,
-                        status_effects,
+                        status_effects: *status_effects,
                     }))
                     .await?;
             }
@@ -748,7 +783,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerSpawnEntityMonster {
+                    .write_packet_buffered(Packet::from(&PacketServerSpawnEntityMonster {
                         entity_id,
                         npc,
                         position,
@@ -756,14 +791,14 @@ impl GameServer {
                         health,
                         spawn_command_state: command,
                         move_mode,
-                        status_effects,
+                        status_effects: *status_effects,
                     }))
                     .await?;
             }
             ServerMessage::RemoveEntities { entity_ids } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerRemoveEntities { entity_ids }))
+                    .write_packet_buffered(Packet::from(&PacketServerRemoveEntities { entity_ids }))
                     .await?;
             }
             ServerMessage::UpdateAbilityValueAdd {
@@ -772,7 +807,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateAbilityValue {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateAbilityValue {
                         is_add: true,
                         ability_type,
                         value,
@@ -785,7 +820,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateAbilityValue {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateAbilityValue {
                         is_add: false,
                         ability_type,
                         value,
@@ -795,7 +830,7 @@ impl GameServer {
             ServerMessage::UpdateInventory { items, money } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateInventory {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateInventory {
                         items,
                         with_money: money,
                     }))
@@ -804,13 +839,13 @@ impl GameServer {
             ServerMessage::UpdateMoney { money } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateMoney { money }))
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateMoney { money }))
                     .await?;
             }
             ServerMessage::UpdateHealthPoints { entity_id: _, hp } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateAbilityValue {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateAbilityValue {
                         is_add: false,
                         ability_type: rose_data::AbilityType::Health,
                         value: hp,
@@ -820,7 +855,7 @@ impl GameServer {
             ServerMessage::UpdateManaPoints { entity_id: _, mp } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateAbilityValue {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateAbilityValue {
                         is_add: false,
                         ability_type: rose_data::AbilityType::Mana,
                         value: mp,
@@ -830,13 +865,13 @@ impl GameServer {
             ServerMessage::RewardItems { items } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerRewardItems { items }))
+                    .write_packet_buffered(Packet::from(&PacketServerRewardItems { items }))
                     .await?;
             }
             ServerMessage::RewardMoney { money } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerRewardMoney { money }))
+                    .write_packet_buffered(Packet::from(&PacketServerRewardMoney { money }))
                     .await?;
             }
             ServerMessage::UpdateSpeed {
@@ -846,7 +881,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateSpeed {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateSpeed {
                         entity_id,
                         run_speed,
                         passive_attack_speed,
@@ -861,12 +896,12 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateStatusEffects {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateStatusEffects {
                         entity_id,
-                        status_effects,
+                        status_effects: *status_effects,
                         updated_values,
                         regen_effects: rose_game_common::components::StatusEffectsRegen {
-                            regens: regen_effects,
+                            regens: *regen_effects,
                             per_second_tick_counter: std::time::Duration::ZERO,
                         },
                     }))
@@ -879,7 +914,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateAmmo {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateAmmo {
                         entity_id,
                         ammo_index,
                         item,
@@ -893,7 +928,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateEquipment {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateEquipment {
                         entity_id,
                         equipment_index,
                         item,
@@ -908,7 +943,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateVehiclePart {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateVehiclePart {
                         entity_id,
                         vehicle_part_index,
                         item,
@@ -919,7 +954,7 @@ impl GameServer {
             ServerMessage::UpdateItemLife { item_slot, life } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateItemLife {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateItemLife {
                         item_slot,
                         life,
                     }))
@@ -934,7 +969,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateLevel {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateLevel {
                         entity_id,
                         update_values: Some((level, experience_points, stat_points, skill_points)),
                     }))
@@ -943,7 +978,7 @@ impl GameServer {
             ServerMessage::LevelUpEntity { entity_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateLevel {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateLevel {
                         entity_id,
                         update_values: None,
                     }))
@@ -956,7 +991,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateXpStamina {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateXpStamina {
                         xp,
                         stamina,
                         source_entity_id,
@@ -969,7 +1004,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateBasicStat {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateBasicStat {
                         basic_stat_type,
                         value,
                     }))
@@ -982,7 +1017,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPickupItemDropResult::Item {
+                    .write_packet_buffered(Packet::from(&PacketServerPickupItemDropResult::Item {
                         drop_entity_id,
                         item_slot,
                         item,
@@ -995,7 +1030,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPickupItemDropResult::Money {
+                    .write_packet_buffered(Packet::from(&PacketServerPickupItemDropResult::Money {
                         drop_entity_id,
                         money,
                     }))
@@ -1007,7 +1042,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPickupItemDropResult::Error {
+                    .write_packet_buffered(Packet::from(&PacketServerPickupItemDropResult::Error {
                         drop_entity_id,
                         error,
                     }))
@@ -1016,14 +1051,16 @@ impl GameServer {
             ServerMessage::LogoutSuccess => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerLogoutResult { result: Ok(()) }))
+                    .write_packet_buffered(Packet::from(&PacketServerLogoutResult {
+                        result: Ok(()),
+                    }))
                     .await?;
                 return Err(ProtocolServerError::ServerInitiatedDisconnect.into());
             }
             ServerMessage::LogoutFailed { wait_duration } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerLogoutResult {
+                    .write_packet_buffered(Packet::from(&PacketServerLogoutResult {
                         result: Err(wait_duration),
                     }))
                     .await?;
@@ -1034,7 +1071,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerQuestResult {
+                    .write_packet_buffered(Packet::from(&PacketServerQuestResult {
                         result: if success {
                             PacketServerQuestResultType::TriggerSuccess
                         } else {
@@ -1052,7 +1089,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerQuestResult {
+                    .write_packet_buffered(Packet::from(&PacketServerQuestResult {
                         result: if success {
                             PacketServerQuestResultType::DeleteSuccess
                         } else {
@@ -1070,7 +1107,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerLearnSkillResult::Success {
+                    .write_packet_buffered(Packet::from(&PacketServerLearnSkillResult::Success {
                         skill_slot,
                         skill_id,
                         updated_skill_points,
@@ -1080,7 +1117,9 @@ impl GameServer {
             ServerMessage::LearnSkillError { error } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerLearnSkillResult::Error { error }))
+                    .write_packet_buffered(Packet::from(&PacketServerLearnSkillResult::Error {
+                        error,
+                    }))
                     .await?;
             }
             ServerMessage::LevelUpSkillSuccess {
@@ -1090,7 +1129,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerLevelUpSkillResult::Success {
+                    .write_packet_buffered(Packet::from(&PacketServerLevelUpSkillResult::Success {
                         skill_slot,
                         skill_id,
                         skill_points,
@@ -1103,7 +1142,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerLevelUpSkillResult::Error {
+                    .write_packet_buffered(Packet::from(&PacketServerLevelUpSkillResult::Error {
                         error,
                         skill_points,
                     }))
@@ -1112,7 +1151,7 @@ impl GameServer {
             ServerMessage::RunNpcDeathTrigger { npc_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerRunNpcDeathTrigger { npc_id }))
+                    .write_packet_buffered(Packet::from(&PacketServerRunNpcDeathTrigger { npc_id }))
                     .await?;
             }
             ServerMessage::OpenPersonalStore {
@@ -1122,7 +1161,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerOpenPersonalStore {
+                    .write_packet_buffered(Packet::from(&PacketServerOpenPersonalStore {
                         entity_id,
                         skin,
                         title: &title,
@@ -1132,7 +1171,9 @@ impl GameServer {
             ServerMessage::ClosePersonalStore { entity_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerClosePersonalStore { entity_id }))
+                    .write_packet_buffered(Packet::from(&PacketServerClosePersonalStore {
+                        entity_id,
+                    }))
                     .await?;
             }
             ServerMessage::PersonalStoreItemList {
@@ -1141,7 +1182,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPersonalStoreItemList {
+                    .write_packet_buffered(Packet::from(&PacketServerPersonalStoreItemList {
                         sell_items,
                         buy_items,
                     }))
@@ -1154,17 +1195,19 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPersonalStoreTransactionResult {
-                        status,
-                        store_entity_id,
-                        update_store_items: update_store,
-                    }))
+                    .write_packet_buffered(Packet::from(
+                        &PacketServerPersonalStoreTransactionResult {
+                            status,
+                            store_entity_id,
+                            update_store_items: update_store,
+                        },
+                    ))
                     .await?;
             }
             ServerMessage::PersonalStoreTransactionUpdateInventory { money, items } => {
                 client
                     .connection
-                    .write_packet(Packet::from(
+                    .write_packet_buffered(Packet::from(
                         &PacketServerPersonalStoreTransactionUpdateMoneyAndInventory {
                             money,
                             items,
@@ -1175,7 +1218,7 @@ impl GameServer {
             ServerMessage::UseItem { entity_id, item } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUseItem {
+                    .write_packet_buffered(Packet::from(&PacketServerUseItem {
                         entity_id,
                         item,
                         inventory_slot: None,
@@ -1189,7 +1232,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUseItem {
+                    .write_packet_buffered(Packet::from(&PacketServerUseItem {
                         entity_id,
                         item,
                         inventory_slot: Some(inventory_slot),
@@ -1203,7 +1246,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerCastSkillSelf {
+                    .write_packet_buffered(Packet::from(&PacketServerCastSkillSelf {
                         entity_id,
                         skill_id,
                         cast_motion_id,
@@ -1220,7 +1263,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerCastSkillTargetEntity {
+                    .write_packet_buffered(Packet::from(&PacketServerCastSkillTargetEntity {
                         entity_id,
                         skill_id,
                         target_entity_id,
@@ -1238,7 +1281,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerCastSkillTargetPosition {
+                    .write_packet_buffered(Packet::from(&PacketServerCastSkillTargetPosition {
                         entity_id,
                         skill_id,
                         target_position,
@@ -1249,7 +1292,9 @@ impl GameServer {
             ServerMessage::StartCastingSkill { entity_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerStartCastingSkill { entity_id }))
+                    .write_packet_buffered(Packet::from(&PacketServerStartCastingSkill {
+                        entity_id,
+                    }))
                     .await?;
             }
             ServerMessage::ApplySkillEffect {
@@ -1261,7 +1306,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerApplySkillEffect {
+                    .write_packet_buffered(Packet::from(&PacketServerApplySkillEffect {
                         entity_id,
                         caster_entity_id,
                         caster_intelligence,
@@ -1273,7 +1318,7 @@ impl GameServer {
             ServerMessage::CancelCastingSkill { entity_id, reason } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerCancelCastingSkill {
+                    .write_packet_buffered(Packet::from(&PacketServerCancelCastingSkill {
                         entity_id,
                         reason,
                     }))
@@ -1285,7 +1330,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerFinishCastingSkill {
+                    .write_packet_buffered(Packet::from(&PacketServerFinishCastingSkill {
                         entity_id,
                         skill_id,
                     }))
@@ -1294,7 +1339,7 @@ impl GameServer {
             ServerMessage::UpdateCooldown { skill_id, duration } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateCooldown {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateCooldown {
                         skill_id,
                         duration,
                     }))
@@ -1306,7 +1351,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUpdateConsumableCooldown {
+                    .write_packet_buffered(Packet::from(&PacketServerUpdateConsumableCooldown {
                         cooldown_group,
                         duration,
                     }))
@@ -1315,7 +1360,7 @@ impl GameServer {
             ServerMessage::NpcStoreTransactionError { error } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerNpcStoreTransactionError {
+                    .write_packet_buffered(Packet::from(&PacketServerNpcStoreTransactionError {
                         error,
                     }))
                     .await?;
@@ -1327,7 +1372,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerMoveToggle {
+                    .write_packet_buffered(Packet::from(&PacketServerMoveToggle {
                         entity_id,
                         move_toggle_type: match move_mode {
                             MoveMode::Walk => PacketServerMoveToggleType::Walk,
@@ -1342,10 +1387,44 @@ impl GameServer {
             ServerMessage::SitToggle { entity_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerMoveToggle {
+                    .write_packet_buffered(Packet::from(&PacketServerMoveToggle {
                         entity_id,
                         move_toggle_type: PacketServerMoveToggleType::Sit,
                         run_speed: None,
+                    }))
+                    .await?;
+            }
+            ServerMessage::SailState {
+                entity_id,
+                position,
+                heading,
+                speed,
+                sail_trim,
+            } => {
+                client
+                    .connection
+                    .write_packet_buffered(Packet::from(&PacketServerSailState {
+                        entity_id,
+                        x: position.x,
+                        y: position.y,
+                        z: position.z,
+                        heading,
+                        speed,
+                        sail_trim,
+                    }))
+                    .await?;
+            }
+            ServerMessage::WindStateUpdate {
+                angle,
+                speed,
+                gust_factor,
+            } => {
+                client
+                    .connection
+                    .write_packet_buffered(Packet::from(&PacketServerWindState {
+                        angle,
+                        speed,
+                        gust_factor,
                     }))
                     .await?;
             }
@@ -1356,7 +1435,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerUseEmote {
+                    .write_packet_buffered(Packet::from(&PacketServerUseEmote {
                         entity_id,
                         motion_id,
                         is_stop,
@@ -1366,19 +1445,23 @@ impl GameServer {
             ServerMessage::PartyCreate { entity_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyRequest::Create(entity_id)))
+                    .write_packet_buffered(Packet::from(&PacketServerPartyRequest::Create(
+                        entity_id,
+                    )))
                     .await?;
             }
             ServerMessage::PartyInvite { entity_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyRequest::Invite(entity_id)))
+                    .write_packet_buffered(Packet::from(&PacketServerPartyRequest::Invite(
+                        entity_id,
+                    )))
                     .await?;
             }
             ServerMessage::PartyAcceptCreate { entity_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyReply::AcceptCreate(
+                    .write_packet_buffered(Packet::from(&PacketServerPartyReply::AcceptCreate(
                         entity_id,
                     )))
                     .await?;
@@ -1386,7 +1469,7 @@ impl GameServer {
             ServerMessage::PartyAcceptInvite { entity_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyReply::AcceptInvite(
+                    .write_packet_buffered(Packet::from(&PacketServerPartyReply::AcceptInvite(
                         entity_id,
                     )))
                     .await?;
@@ -1394,7 +1477,7 @@ impl GameServer {
             ServerMessage::PartyRejectInvite { reason, entity_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyReply::RejectInvite(
+                    .write_packet_buffered(Packet::from(&PacketServerPartyReply::RejectInvite(
                         reason, entity_id,
                     )))
                     .await?;
@@ -1402,7 +1485,7 @@ impl GameServer {
             ServerMessage::PartyChangeOwner { entity_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyReply::ChangeOwner(
+                    .write_packet_buffered(Packet::from(&PacketServerPartyReply::ChangeOwner(
                         entity_id,
                     )))
                     .await?;
@@ -1410,7 +1493,7 @@ impl GameServer {
             ServerMessage::PartyDelete => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyReply::Delete))
+                    .write_packet_buffered(Packet::from(&PacketServerPartyReply::Delete))
                     .await?;
             }
             ServerMessage::PartyUpdateRules {
@@ -1419,7 +1502,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyUpdateRules {
+                    .write_packet_buffered(Packet::from(&PacketServerPartyUpdateRules {
                         item_sharing,
                         xp_sharing,
                     }))
@@ -1433,7 +1516,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyMembers::List {
+                    .write_packet_buffered(Packet::from(&PacketServerPartyMembers::List {
                         item_sharing,
                         xp_sharing,
                         owner_character_id,
@@ -1447,7 +1530,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyMembers::Leave {
+                    .write_packet_buffered(Packet::from(&PacketServerPartyMembers::Leave {
                         leaver_character_id,
                         owner_character_id,
                     }))
@@ -1456,7 +1539,7 @@ impl GameServer {
             ServerMessage::PartyMemberKicked { character_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyReply::MemberKicked(
+                    .write_packet_buffered(Packet::from(&PacketServerPartyReply::MemberKicked(
                         character_id,
                     )))
                     .await?;
@@ -1464,7 +1547,7 @@ impl GameServer {
             ServerMessage::PartyMemberDisconnect { character_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyReply::MemberDisconnect(
+                    .write_packet_buffered(Packet::from(&PacketServerPartyReply::MemberDisconnect(
                         character_id,
                     )))
                     .await?;
@@ -1472,8 +1555,8 @@ impl GameServer {
             ServerMessage::PartyMemberUpdateInfo { member_info } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyMemberUpdateInfo {
-                        member_info,
+                    .write_packet_buffered(Packet::from(&PacketServerPartyMemberUpdateInfo {
+                        member_info: *member_info,
                     }))
                     .await?;
             }
@@ -1483,7 +1566,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerPartyMemberRewardItem {
+                    .write_packet_buffered(Packet::from(&PacketServerPartyMemberRewardItem {
                         entity_id: client_entity_id,
                         item,
                     }))
@@ -1492,13 +1575,16 @@ impl GameServer {
             ServerMessage::ChangeNpcId { entity_id, npc_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerChangeNpcId { entity_id, npc_id }))
+                    .write_packet_buffered(Packet::from(&PacketServerChangeNpcId {
+                        entity_id,
+                        npc_id,
+                    }))
                     .await?;
             }
             ServerMessage::SetHotbarSlot { slot_index, slot } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerSetHotbarSlot {
+                    .write_packet_buffered(Packet::from(&PacketServerSetHotbarSlot {
                         slot_index,
                         slot,
                     }))
@@ -1510,7 +1596,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerAdjustPosition {
+                    .write_packet_buffered(Packet::from(&PacketServerAdjustPosition {
                         entity_id,
                         position,
                     }))
@@ -1519,7 +1605,7 @@ impl GameServer {
             ServerMessage::CraftInsertGem { update_items } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerCraftItem::InsertGemSuccess {
+                    .write_packet_buffered(Packet::from(&PacketServerCraftItem::InsertGemSuccess {
                         items: update_items,
                     }))
                     .await?;
@@ -1527,7 +1613,7 @@ impl GameServer {
             ServerMessage::CraftInsertGemError { error } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerCraftItem::InsertGemFailed {
+                    .write_packet_buffered(Packet::from(&PacketServerCraftItem::InsertGemFailed {
                         error,
                     }))
                     .await?;
@@ -1535,19 +1621,21 @@ impl GameServer {
             ServerMessage::BankOpen => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerBankOpen::Open))
+                    .write_packet_buffered(Packet::from(&PacketServerBankOpen::Open))
                     .await?;
             }
             ServerMessage::BankSetItems { items } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerBankOpen::SetItems { items }))
+                    .write_packet_buffered(Packet::from(&PacketServerBankOpen::SetItems { items }))
                     .await?;
             }
             ServerMessage::BankUpdateItems { items } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerBankOpen::UpdateItems { items }))
+                    .write_packet_buffered(Packet::from(&PacketServerBankOpen::UpdateItems {
+                        items,
+                    }))
                     .await?;
             }
             ServerMessage::BankTransaction {
@@ -1559,7 +1647,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerBankTransaction {
+                    .write_packet_buffered(Packet::from(&PacketServerBankTransaction {
                         inventory_item_slot,
                         inventory_item,
                         inventory_money,
@@ -1575,7 +1663,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerRepairedItemUsingNpc {
+                    .write_packet_buffered(Packet::from(&PacketServerRepairedItemUsingNpc {
                         item_slot,
                         item,
                         updated_money,
@@ -1596,7 +1684,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerClanCommand::ClanInfo {
+                    .write_packet_buffered(Packet::from(&PacketServerClanCommand::ClanInfo {
                         id,
                         name,
                         description,
@@ -1620,7 +1708,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerClanCommand::ClanUpdateInfo {
+                    .write_packet_buffered(Packet::from(&PacketServerClanCommand::ClanUpdateInfo {
                         id,
                         mark,
                         level,
@@ -1640,7 +1728,7 @@ impl GameServer {
             } => {
                 client
                     .connection
-                    .write_packet(Packet::from(
+                    .write_packet_buffered(Packet::from(
                         &PacketServerClanCommand::CharacterUpdateClan {
                             client_entity_id,
                             id,
@@ -1655,7 +1743,7 @@ impl GameServer {
             ServerMessage::ClanMemberConnected { name, channel_id } => {
                 client
                     .connection
-                    .write_packet(Packet::from(
+                    .write_packet_buffered(Packet::from(
                         &PacketServerClanCommand::ClanMemberConnected { name, channel_id },
                     ))
                     .await?;
@@ -1663,7 +1751,7 @@ impl GameServer {
             ServerMessage::ClanMemberDisconnected { name } => {
                 client
                     .connection
-                    .write_packet(Packet::from(
+                    .write_packet_buffered(Packet::from(
                         &PacketServerClanCommand::ClanMemberDisconnected { name },
                     ))
                     .await?;
@@ -1671,15 +1759,15 @@ impl GameServer {
             ServerMessage::ClanCreateError { error } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerClanCommand::ClanCreateError {
-                        error,
-                    }))
+                    .write_packet_buffered(Packet::from(
+                        &PacketServerClanCommand::ClanCreateError { error },
+                    ))
                     .await?;
             }
             ServerMessage::ClanMemberList { members } => {
                 client
                     .connection
-                    .write_packet(Packet::from(&PacketServerClanCommand::ClanMemberList {
+                    .write_packet_buffered(Packet::from(&PacketServerClanCommand::ClanMemberList {
                         members,
                     }))
                     .await?;
@@ -1703,7 +1791,10 @@ impl GameServer {
             | ServerMessage::SelectCharacterError
             | ServerMessage::UpdateSkillList { .. }
             | ServerMessage::UpdateAbilityValues { .. } => {
-                panic!("Received unexpected server message for game server")
+                // Disconnect instead of panicking the connection task.
+                return Err(anyhow::anyhow!(
+                    "Received unexpected server message for game server"
+                ));
             }
         }
         Ok(())

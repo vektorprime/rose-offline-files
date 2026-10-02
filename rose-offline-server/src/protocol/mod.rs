@@ -32,6 +32,10 @@ pub struct Protocol {
 
 pub mod server;
 
+/// Most server messages written before one flush. Bounds how long a burst of
+/// queued messages can delay reading from the client.
+pub const MAX_SERVER_MESSAGES_PER_FLUSH: usize = 256;
+
 #[macro_export]
 macro_rules! implement_protocol_server {
     ( $x:ident ) => {
@@ -58,7 +62,26 @@ macro_rules! implement_protocol_server {
                         },
                         server_message = client.server_message_rx.recv() => {
                             if let Some(message) = server_message {
-                                self.handle_server_message(client, message).await?;
+                                // Write everything already queued (usually a whole game
+                                // tick's worth) and flush once, instead of one flush and
+                                // send syscall per packet. Bytes and order are unchanged.
+                                let mut result = self.handle_server_message(client, message).await;
+                                let mut message_count = 1;
+                                while result.is_ok()
+                                    && message_count < $crate::protocol::MAX_SERVER_MESSAGES_PER_FLUSH
+                                {
+                                    let Ok(message) = client.server_message_rx.try_recv() else {
+                                        break;
+                                    };
+                                    result = self.handle_server_message(client, message).await;
+                                    message_count += 1;
+                                }
+
+                                // Flush even when a handler failed: e.g. LogoutSuccess
+                                // writes its reply and then requests the disconnect.
+                                let flush_result = client.connection.flush().await;
+                                result?;
+                                flush_result?;
                             } else {
                                 return Err(ProtocolServerError::ServerInitiatedDisconnect.into());
                             }

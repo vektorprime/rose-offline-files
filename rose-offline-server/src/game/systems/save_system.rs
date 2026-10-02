@@ -14,7 +14,7 @@ use crate::game::{
     },
     events::{ClanEvent, PartyMemberEvent, SaveEvent},
     resources::ClientEntityList,
-    storage::{bank::BankStorage, character::CharacterStorage},
+    storage::{bank::BankStorageRef, character::CharacterStorageRef},
 };
 
 #[derive(QueryData)]
@@ -58,24 +58,26 @@ pub fn save_system(
                 remove_after_save,
             } => {
                 if let Ok(character) = query.get(entity) {
-                    let storage = CharacterStorage {
-                        info: character.character_info.clone(),
-                        basic_stats: character.basic_stats.clone(),
-                        inventory: character.inventory.clone(),
-                        equipment: character.equipment.clone(),
-                        level: *character.level,
-                        experience_points: *character.experience_points,
-                        position: character.position.clone(),
-                        skill_list: character.skill_list.clone(),
-                        hotbar: character.hotbar.clone(),
+                    // Serialised straight from the components, producing the same JSON as a
+                    // CharacterStorage built from clones of them.
+                    let storage = CharacterStorageRef {
+                        info: character.character_info,
+                        basic_stats: character.basic_stats,
+                        inventory: character.inventory,
+                        equipment: character.equipment,
+                        level: character.level,
+                        experience_points: character.experience_points,
+                        position: character.position,
+                        skill_list: character.skill_list,
+                        hotbar: character.hotbar,
                         delete_time: None,
-                        health_points: *character.health_points,
-                        mana_points: *character.mana_points,
-                        stat_points: *character.stat_points,
-                        skill_points: *character.skill_points,
-                        quest_state: character.quest_state.clone(),
-                        union_membership: character.union_membership.clone(),
-                        stamina: *character.stamina,
+                        health_points: character.health_points,
+                        mana_points: character.mana_points,
+                        skill_points: character.skill_points,
+                        stat_points: character.stat_points,
+                        quest_state: character.quest_state,
+                        union_membership: character.union_membership,
+                        stamina: character.stamina,
                     };
                     match storage.save() {
                         Ok(_) => info!("Saved character {}", &character.character_info.name),
@@ -85,7 +87,9 @@ pub fn save_system(
                         ),
                     }
 
-                    let bank_storage = BankStorage::from(character.bank);
+                    let bank_storage = BankStorageRef {
+                        slots: &character.bank.slots,
+                    };
                     match bank_storage.save(&character.account.name) {
                         Ok(_) => info!("Saved bank for account {}", &character.account.name),
                         Err(error) => error!(

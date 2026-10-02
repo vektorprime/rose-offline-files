@@ -6,6 +6,10 @@ use std::convert::TryInto;
 use std::marker::PhantomData;
 use std::num::Wrapping;
 
+/// Largest packet (including the 6 byte header) the encrypted header can
+/// describe: its `add_buffer_len` field is 11 bits wide.
+pub const MAX_PACKET_SIZE: usize = 0x7FF;
+
 pub const IROSE_112_TABLE: [u8; 256] = [
     0x00, 0x5E, 0xBC, 0xE2, 0x61, 0x3F, 0xDD, 0x83, 0xC2, 0x9C, 0x7E, 0x20, 0xA3, 0xFD, 0x1F, 0x41,
     0x9D, 0xC3, 0x21, 0x7F, 0xFC, 0xA2, 0x40, 0x1E, 0x5F, 0x01, 0xE3, 0xBD, 0x3E, 0x60, 0x82, 0xDC,
@@ -399,6 +403,10 @@ where
         self.seed
     }
 
+    fn max_packet_size(&self) -> usize {
+        MAX_PACKET_SIZE
+    }
+
     fn encrypt_packet(&self, buffer: &mut BytesMut) {
         // Minimum packet size is 6 bytes (2 size + 4 header + data)
         if buffer.len() < 6 {
@@ -414,12 +422,19 @@ where
             return;
         }
         
-        let head = Head::new()
+        // Size and command are 11 bit fields; the unchecked setters panic on
+        // larger values. Connection never passes an oversized packet (see
+        // max_packet_size), so this only guards against misuse.
+        let head = match Head::new()
             .with_add_table_value(add_table_value)
             .with_encrypt_add_value(encrypt_add_value)
             .with_encrypt_value(((add_table_value + encrypt_add_value as u16) & 0x7) as u8)
-            .with_add_buffer_len(size)
-            .with_command((&buffer[2..4]).get_u16_le());
+            .with_add_buffer_len_checked(size)
+            .and_then(|head| head.with_command_checked((&buffer[2..4]).get_u16_le()))
+        {
+            Ok(head) => head,
+            Err(_) => return,
+        };
 
         let mut head_server = match buffer[0..5].try_into() {
             Ok(bytes) => E::from_header_bytes(bytes),

@@ -3,7 +3,7 @@ mod reader;
 mod virtual_filesystem;
 mod writer;
 
-pub use reader::RoseFileReader;
+pub use reader::{PlainData, RoseFileReader};
 pub use writer::RoseFileWriter;
 
 pub trait RoseFile {
@@ -74,8 +74,8 @@ pub use titanvfs::TitanVfsIndex;
 pub use tsi::{TsiFile, TsiSprite, TsiTexture, TsiTextureId};
 pub use vfs::VfsIndex;
 pub use virtual_filesystem::{
-    HostFilesystemDevice, VfsError, VfsFile, VfsPath, VfsPathBuf, VirtualFilesystem,
-    VirtualFilesystemDevice,
+    HostFilesystemDevice, VfsDirListing, VfsError, VfsFile, VfsPath, VfsPathBuf,
+    VirtualFilesystem, VirtualFilesystemDevice,
 };
 pub use zmd::ZmdFile;
 pub use zmo::{ZmoChannel, ZmoFile, ZmoReadOptions};

@@ -177,6 +177,9 @@ pub fn client_entity_visibility_system(
             let mut visibility_difference =
                 game_client.client_entity_visibility.entities ^ *sector_visible_entities;
 
+            // Taken before ignoring self, so it is exactly "stored set != sector set"
+            let visibility_changed = visibility_difference.any();
+
             // Ignore self
             visibility_difference.set(game_client.client_entity.id.0, false);
 
@@ -285,7 +288,7 @@ if let Ok(monster) = monsters_query.get(*spawn_entity) {
                                         &query_target,
                                     ),
                                     move_mode: *monster.move_mode,
-                                    status_effects: monster.status_effects.active.clone(),
+                                    status_effects: Box::new(monster.status_effects.active.clone()),
                                 })
                                 .ok();
                         }
@@ -307,7 +310,7 @@ if let Ok(npc) = npcs_query.get(*spawn_entity) {
                                         &query_target,
                                     ),
                                     move_mode: *npc.move_mode,
-                                    status_effects: npc.status_effects.active.clone(),
+                                    status_effects: Box::new(npc.status_effects.active.clone()),
                                 })
                                 .ok();
                         }
@@ -326,8 +329,10 @@ if let Ok(npc) = npcs_query.get(*spawn_entity) {
                     .ok();
             }
 
-            // Update visibility
-            game_client.client_entity_visibility.entities = *sector_visible_entities;
+            // Update visibility, only when it differs to avoid a write (and change mark) every tick
+            if visibility_changed {
+                game_client.client_entity_visibility.entities = *sector_visible_entities;
+            }
         }
     }
 

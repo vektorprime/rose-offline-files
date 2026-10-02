@@ -5,10 +5,37 @@
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use std::{io::Write, path::PathBuf};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+    sync::{Mutex, MutexGuard, PoisonError},
+};
 use uuid::Uuid;
 
 use super::LLM_BUDDY_BOT_STORAGE_DIR;
+
+/// Stored bots as (listed name, bot), in storage directory listing order followed by bots first
+/// written after the index was loaded.
+type BotIndex = Vec<(String, LlmBuddyBotStorage)>;
+
+/// In-memory copy of the bot storage directory, loaded on first use and kept in sync by every
+/// write and delete made through this module, so player zone joins do not re-read every bot file
+/// on the ECS thread. Bot files changed by anything else while the server runs are not seen.
+static BOT_INDEX: Mutex<Option<BotIndex>> = Mutex::new(None);
+
+fn lock_bot_index() -> MutexGuard<'static, Option<BotIndex>> {
+    BOT_INDEX.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The name under which `list_all_bot_names` reports the file at `path`, if it reports it at all.
+fn listed_bot_name(path: &Path) -> Option<&str> {
+    if path.parent() != Some(LLM_BUDDY_BOT_STORAGE_DIR.as_path())
+        || !path.extension().map_or(false, |ext| ext == "json")
+    {
+        return None;
+    }
+    path.file_stem().and_then(|stem| stem.to_str())
+}
 
 /// Persistent storage for an LLM Buddy Bot
 ///
@@ -202,6 +229,9 @@ impl LlmBuddyBotStorage {
             )
         })?;
 
+        // Held across the rename so the index and the directory always change together.
+        let mut bot_index = lock_bot_index();
+
         if allow_overwrite {
             file.persist(&path).with_context(|| {
                 format!(
@@ -217,6 +247,19 @@ impl LlmBuddyBotStorage {
                 )
             })?;
         }
+
+        // An index that is not loaded yet will read the new file when it is loaded.
+        if let (Some(bots), Some(listed_name)) = (bot_index.as_mut(), listed_bot_name(&path)) {
+            if let Some((_, indexed_bot)) = bots
+                .iter_mut()
+                .find(|(indexed_name, _)| indexed_name == listed_name)
+            {
+                *indexed_bot = bot_to_save;
+            } else {
+                bots.push((listed_name.to_string(), bot_to_save));
+            }
+        }
+        drop(bot_index);
 
         log::info!("Saved LLM buddy bot '{}' ({})", self.name, self.bot_id);
         Ok(())
@@ -235,9 +278,14 @@ impl LlmBuddyBotStorage {
     /// Delete a bot storage by name
     pub fn delete(name: &str) -> Result<(), anyhow::Error> {
         let path = get_bot_storage_path(name);
+        // Held across the removal so the index and the directory always change together.
+        let mut bot_index = lock_bot_index();
         if path.exists() {
-            std::fs::remove_file(path)?;
+            std::fs::remove_file(&path)?;
             log::info!("Deleted LLM buddy bot storage for '{}'", name);
+        }
+        if let (Some(bots), Some(listed_name)) = (bot_index.as_mut(), listed_bot_name(&path)) {
+            bots.retain(|(indexed_name, _)| indexed_name != listed_name);
         }
         Ok(())
     }
@@ -264,13 +312,13 @@ impl LlmBuddyBotStorage {
         Ok(names)
     }
 
-    /// Load all stored bots
-    pub fn load_all() -> Result<Vec<Self>, anyhow::Error> {
+    /// Read every bot in the storage directory, in directory listing order
+    fn read_storage_dir() -> Result<BotIndex, anyhow::Error> {
         let mut bots = Vec::new();
-        
+
         for name in Self::list_all_bot_names()? {
             match Self::try_load(&name) {
-                Ok(bot) => bots.push(bot),
+                Ok(bot) => bots.push((name, bot)),
                 Err(e) => log::error!("Failed to load bot '{}': {:?}", name, e),
             }
         }
@@ -278,22 +326,29 @@ impl LlmBuddyBotStorage {
         Ok(bots)
     }
 
+    /// Run `f` over the in-memory bot index, reading the storage directory on first use
+    fn with_bot_index<R>(f: impl FnOnce(&[(String, Self)]) -> R) -> Result<R, anyhow::Error> {
+        let mut bot_index = lock_bot_index();
+        if bot_index.is_none() {
+            // A failed read is not cached, so the next call retries it.
+            *bot_index = Some(Self::read_storage_dir()?);
+        }
+        Ok(f(bot_index.as_deref().unwrap_or_default()))
+    }
+
+    /// Load all stored bots
+    pub fn load_all() -> Result<Vec<Self>, anyhow::Error> {
+        Self::with_bot_index(|bots| bots.iter().map(|(_, bot)| bot.clone()).collect())
+    }
+
     /// Load all stored bots assigned to a specific player
     pub fn load_for_player(player_name: &str) -> Result<Vec<Self>, anyhow::Error> {
-        let mut bots = Vec::new();
-        
-        for name in Self::list_all_bot_names()? {
-            match Self::try_load(&name) {
-                Ok(bot) => {
-                    if bot.assigned_player == player_name {
-                        bots.push(bot);
-                    }
-                }
-                Err(e) => log::error!("Failed to load bot '{}': {:?}", name, e),
-            }
-        }
-
-        Ok(bots)
+        Self::with_bot_index(|bots| {
+            bots.iter()
+                .filter(|(_, bot)| bot.assigned_player == player_name)
+                .map(|(_, bot)| bot.clone())
+                .collect()
+        })
     }
 }
 
