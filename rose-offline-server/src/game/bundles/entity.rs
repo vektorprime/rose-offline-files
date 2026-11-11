@@ -29,6 +29,8 @@ pub const NPC_OBJECT_VARIABLES_COUNT: usize = 20;
 pub const MONSTER_OBJECT_VARIABLES_COUNT: usize = 5;
 pub const ITEM_DROP_ENTITY_EXPIRE_TIME: Duration = Duration::from_secs(120);
 pub const ITEM_DROP_OWNER_EXPIRE_TIME: Duration = Duration::from_secs(60);
+/// How far a monster's random spawn spot may move to stand on walkable ground.
+const MONSTER_SPAWN_SNAP_CM: f32 = 1500.0;
 pub const ITEM_DROP_RADIUS: i32 = 200;
 
 #[derive(Bundle)]
@@ -149,12 +151,20 @@ impl MonsterBundle {
             SpawnOrigin::Quest(_, spawn_position) => spawn_position,
         };
 
+        let spawn_spot = Vec3::new(
+            spawn_position.x + rand::thread_rng().gen_range(-spawn_range..spawn_range) as f32,
+            spawn_position.y + rand::thread_rng().gen_range(-spawn_range..spawn_range) as f32,
+            0.0,
+        );
+        // On walkable ground at floor height: spawn squares reach over cliffs,
+        // banks and water.
         let position = Position::new(
-            Vec3::new(
-                spawn_position.x + rand::thread_rng().gen_range(-spawn_range..spawn_range) as f32,
-                spawn_position.y + rand::thread_rng().gen_range(-spawn_range..spawn_range) as f32,
-                0.0,
-            ),
+            game_data
+                .zones
+                .get_zone(spawn_zone)
+                .and_then(|zone| zone.nav_grid.as_ref())
+                .and_then(|nav_grid| nav_grid.rescue_point(spawn_spot, MONSTER_SPAWN_SNAP_CM))
+                .unwrap_or(spawn_spot),
             spawn_zone,
         );
 

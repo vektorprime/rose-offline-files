@@ -20,6 +20,10 @@ use super::{
 
 /// Characters counted around a spawn to judge how crowded it is.
 const CROWD_RADIUS_MIN: f32 = 1000.0;
+/// Random spots tried around a spawn before falling back to its center.
+const SPAWN_SPOT_TRIES: usize = 4;
+/// How far a spawn spot may move to reach walkable ground the bot can get to.
+const SPAWN_SPOT_SNAP_CM: f32 = 1500.0;
 
 #[derive(Debug, Default, Clone, Component, ActionBuilder)]
 pub struct FindMonsterSpawns;
@@ -162,15 +166,35 @@ pub fn action_find_monster_spawn(
                     MoveMode::Run
                 };
 
-                // Move near the center of spawn
+                // Move near the center of spawn, to a spot the bot can walk to
+                // (spawn squares often reach over cliffs, banks and water).
                 let range = (spawn_point.range * 100).max(500) as f32;
-                commands.entity(entity).insert(NextCommand::with_move(
-                    spawn_point.position
-                        + Vec3::new(
-                            rng.gen_range(-range..range),
-                            rng.gen_range(-range..range),
-                            0.0,
+                let nav_grid = zone_data.nav_grid.as_ref();
+                let destination = (0..SPAWN_SPOT_TRIES)
+                    .map(|_| {
+                        spawn_point.position
+                            + Vec3::new(
+                                rng.gen_range(-range..range),
+                                rng.gen_range(-range..range),
+                                0.0,
+                            )
+                    })
+                    .chain(std::iter::once(spawn_point.position))
+                    .find_map(|candidate| match nav_grid {
+                        Some(nav_grid) => nav_grid.reachable_point(
+                            position.position,
+                            candidate,
+                            SPAWN_SPOT_SNAP_CM,
                         ),
+                        None => Some(candidate),
+                    });
+                let Some(destination) = destination else {
+                    // Nothing near this spawn is reachable from here.
+                    *state = ActionState::Failure;
+                    continue;
+                };
+                commands.entity(entity).insert(NextCommand::with_move(
+                    destination,
                     None,
                     Some(move_mode),
                 ));

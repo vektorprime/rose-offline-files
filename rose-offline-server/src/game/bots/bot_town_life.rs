@@ -243,17 +243,16 @@ fn random_offset(rng: &mut impl Rng, min: f32, max: f32) -> Vec3 {
     Vec3::new(angle.cos() * distance, angle.sin() * distance, 0.0)
 }
 
-/// A walkable point at or near `point` (towns have walls and houses).
-fn walkable(zone_data: &rose_data::ZoneData, point: Vec3) -> Option<Vec3> {
+/// How far a town destination may move to reach ground the bot can walk to.
+const WALKABLE_SNAP_CM: f32 = 1200.0;
+
+/// A point at or near `point` that a bot standing at `from` can walk to
+/// (towns have walls, houses, moats and raised platforms).
+fn walkable(zone_data: &rose_data::ZoneData, from: Vec3, point: Vec3) -> Option<Vec3> {
     let Some(nav_grid) = zone_data.nav_grid.as_ref() else {
         return Some(point);
     };
-    if !nav_grid.is_blocked_world(point.x, point.y) {
-        return Some(point);
-    }
-    nav_grid
-        .nearest_unblocked(point.x, point.y, 6)
-        .map(|(x, y)| Vec3::new(x, y, point.z))
+    nav_grid.reachable_point(from, point, WALKABLE_SNAP_CM)
 }
 
 /// A point `distance` away from `anchor` on the side facing `from`.
@@ -282,7 +281,7 @@ fn stroll_target(rng: &mut impl Rng, zone_data: &rose_data::ZoneData, from: Vec3
         if candidate.xy().distance(from.xy()) < 300.0 {
             continue;
         }
-        if let Some(point) = walkable(zone_data, candidate) {
+        if let Some(point) = walkable(zone_data, from, candidate) {
             return Some(point);
         }
     }
@@ -302,7 +301,7 @@ fn npc_target(rng: &mut impl Rng, zone_data: &rose_data::ZoneData, from: Vec3) -
         })?;
     let spot = in_front_of(npc.position, from, rng.gen_range(180.0..280.0))
         + random_offset(rng, 0.0, 60.0);
-    walkable(zone_data, spot)
+    walkable(zone_data, from, spot)
 }
 
 #[derive(QueryData)]
@@ -369,7 +368,7 @@ fn start_walk(
             let side = (destination.xy() - from.xy()).perp().normalize_or_zero()
                 * (distance * rng.gen_range(0.1..0.25f32) * sign);
             let point = along + side;
-            walkable(zone_data, Vec3::new(point.x, point.y, destination.z))
+            walkable(zone_data, from, Vec3::new(point.x, point.y, destination.z))
         })
         .flatten();
 
@@ -643,6 +642,7 @@ pub fn action_town_life(
                             .and_then(|(_, vendor_position)| {
                                 walkable(
                                     zone_data,
+                                    from,
                                     in_front_of(
                                         *vendor_position,
                                         from,
@@ -678,6 +678,7 @@ pub fn action_town_life(
                             .and_then(|(_, person_position)| {
                                 walkable(
                                     zone_data,
+                                    from,
                                     *person_position + random_offset(&mut rng, 140.0, 260.0),
                                 )
                             })
@@ -734,6 +735,7 @@ pub fn action_town_life(
                                 }
                                 let target = walkable(
                                     zone_data,
+                                    from,
                                     in_front_of(person_position, from, rng.gen_range(130.0..190.0)),
                                 )?;
                                 Some(start_walk(
@@ -816,7 +818,7 @@ pub fn action_town_life(
                             // A small step turns the character, like a player
                             // adjusting the camera and shuffling about.
                             let step = from + random_offset(&mut rng, 60.0, 120.0);
-                            walkable(zone_data, step).map(|target| {
+                            walkable(zone_data, from, step).map(|target| {
                                 start_walk(
                                     &mut commands,
                                     &mut rng,

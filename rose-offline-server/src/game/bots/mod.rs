@@ -86,7 +86,10 @@ use bot_follow_party_leader::{
     ShouldFollowPartyLeader,
 };
 use bot_join_zone::{action_join_zone, score_is_teleporting, IsTeleporting, JoinZone};
-pub use bot_navigation::{bot_chase_steering_system, bot_navigation_system, bot_separation_system, BotNavigation};
+pub use bot_navigation::{
+    bot_chase_steering_system, bot_navigation_system, bot_rescue_stranded_system,
+    bot_separation_system, BotNavigation,
+};
 use bot_pickup_item::{
     action_pickup_nearest_item_drop, score_find_nearby_item_drop_system, FindNearbyItemDrop,
     PickupNearestItemDrop,

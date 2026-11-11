@@ -70,6 +70,7 @@ mod item;
 mod item_database;
 mod job_class_database;
 mod motion_file_data;
+mod nav_bake;
 mod nav_grid;
 mod npc_database;
 mod quest_database;
@@ -108,7 +109,15 @@ pub use item_database::{
 };
 pub use job_class_database::{JobClassData, JobClassDatabase, JobClassId, JobId};
 pub use motion_file_data::{MotionFileData, MotionId};
-pub use nav_grid::{NavGrid, NAV_AGENT_RADIUS_CM, NAV_MAX_CELLS_PER_AXIS, NAV_PREFERRED_CELL_CM};
+pub use nav_bake::{
+    bake_nav_grid, NavBakeInput, NavBakeParams, NavBakeReport, NavBakeTriangle, NavTerrainBlock,
+    NavWaterPlane,
+};
+pub use nav_grid::{
+    NavGrid, NAV_AGENT_RADIUS_CM, NAV_BLOCK_CLEARANCE, NAV_BLOCK_LEDGE, NAV_BLOCK_NO_FLOOR,
+    NAV_BLOCK_SLOPE, NAV_BLOCK_VOID, NAV_BLOCK_WALL, NAV_BLOCK_WARP, NAV_BLOCK_WATER,
+    NAV_HEIGHT_UNIT_CM, NAV_MAX_CELLS_PER_AXIS, NAV_PREFERRED_CELL_CM,
+};
 pub use npc_database::{
     NpcConversationData, NpcConversationId, NpcData, NpcDatabase, NpcDatabaseOptions, NpcId,
     NpcMotionAction, NpcStoreTabData, NpcStoreTabId,

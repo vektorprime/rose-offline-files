@@ -15,6 +15,7 @@ mod status_effect_database;
 mod string_database;
 mod warp_gate_database;
 mod zone_database;
+mod zone_nav;
 
 pub use ai_database::get_ai_database;
 pub use animation_event_flags::get_animation_event_flags;
@@ -33,6 +34,7 @@ pub use status_effect_database::get_status_effect_database;
 pub use string_database::get_string_database;
 pub use warp_gate_database::get_warp_gate_database;
 pub use zone_database::{get_zone_database, get_zone_list};
+pub use zone_nav::describe_nav_objects_near;
 
 pub use data_decoder::{
     decode_ability_type, decode_ammo_index, decode_clan_member_position, decode_equipment_index,

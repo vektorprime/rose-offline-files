@@ -246,13 +246,13 @@ fn merchant_spot(zone_data: &rose_data::ZoneData, from: Vec3, rng: &mut impl Rng
     let distance = rng.gen_range(160.0..220.0);
     let spot = anchor + Vec3::new(direction.x * distance, direction.y * distance, 0.0);
 
-    match zone_data.nav_grid.as_ref() {
-        Some(nav_grid) if nav_grid.is_blocked_world(spot.x, spot.y) => nav_grid
-            .nearest_unblocked(spot.x, spot.y, 6)
-            .map(|(x, y)| Vec3::new(x, y, spot.z))
-            .unwrap_or(spot),
-        _ => spot,
-    }
+    // A spot the bot can walk to (NPCs stand behind counters and on
+    // platforms); the trip deadline covers the rare unreachable merchant.
+    zone_data
+        .nav_grid
+        .as_ref()
+        .and_then(|nav_grid| nav_grid.reachable_point(from, spot, 1200.0))
+        .unwrap_or(spot)
 }
 
 /// "Sells" the loot (equipment and material pages) for roughly the NPC buy

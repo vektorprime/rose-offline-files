@@ -7,34 +7,44 @@
 //! through buildings and walls on every client's screen.
 //!
 //! This module rewrites far `target=None` travel orders into waypoint legs
-//! from the zone's baked [`rose_data::NavGrid`] (IFO collision walls +
-//! cnst/deco prop footprints, see `rose-data-irose/src/zone_database.rs`).
-//! Short moves and target-tracking moves (attack chase, pickup, follow) are
-//! left untouched: they are close-range and `command_system` recomputes their
-//! destination from the live target every tick.
+//! from the zone's baked [`rose_data::NavGrid`] (terrain slopes, walls,
+//! ledges, object floors, deep water and warp gates; see `rose_data::nav_bake`
+//! and `rose-data-irose/src/zone_nav.rs`). Short moves go straight when the
+//! straight line is walkable. Target-tracking moves (attack chase, pickup,
+//! follow) are steered by `bot_chase_steering_system`: they are close-range
+//! and `command_system` recomputes their destination every tick.
 //!
-//! Server movement can never physically jam (no colliders), so there is no
-//! stuck timer here: legs always arrive, and an unreachable goal degrades to
-//! the nearest reachable cell via `NavGrid::nearest_unblocked`.
+//! Server movement can never physically jam (no colliders), so legs always
+//! arrive. An unreachable goal is moved to the nearest spot the bot can
+//! reach (`NavGrid::reachable_point`); with none, the bot stops instead of
+//! walking through a wall, off a cliff or into deep water. A bot that still
+//! ends up stranded (on blocked ground, or in a pocket no designer placed
+//! point leads to) is put back by `bot_rescue_stranded_system`.
 
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    time::{Duration, Instant},
+};
 
 use bevy::{
     math::{Vec2, Vec3, Vec3Swizzles},
-    prelude::{Commands, Component, Entity, Query, Res, ResMut, Without},
+    prelude::{Commands, Component, Entity, Local, Query, Res, ResMut, Without},
     time::Time,
 };
 use rand::Rng;
 use rose_data::ZoneId;
 
 use crate::game::{
+    bundles::{client_entity_join_zone, client_entity_leave_zone},
     components::{
-        ClientEntity, ClientEntitySector, Command, CommandData, GameClient, MoveMode, NextCommand,
-        Position,
+        ClientEntity, ClientEntitySector, ClientEntityType, ClientEntityVisibility, Command,
+        CommandData, Dead, GameClient, LlmBuddyBot, MoveMode, NextCommand, Position,
     },
     messages::server::ServerMessage,
     resources::{ClientEntityList, GameConfig, GameData, ServerMessages},
 };
+
+use super::BotRole;
 
 /// Waypoint legs below this travel distance go direct (no routing).
 const NAV_ROUTE_MIN_DIST_CM: f32 = 600.0;
@@ -42,6 +52,8 @@ const NAV_ROUTE_MIN_DIST_CM: f32 = 600.0;
 const NAV_WAYPOINT_REACH_CM: f32 = 150.0;
 /// Clamp for a single leg: `MoveEntity.distance` is a u16 cm field.
 const NAV_MAX_LEG_CM: f32 = 50000.0;
+/// How far an unreachable goal may move to the nearest reachable spot.
+const NAV_RETARGET_CM: f32 = 2000.0;
 /// `NextCommand` destinations within this distance of the fed leg (or the
 /// goal) are ours; anything else is a new order and gets a new route.
 const NAV_GOAL_EPS_CM: f32 = 1.0;
@@ -263,14 +275,24 @@ pub fn bot_navigation_system(
         });
 
         if !following_route {
-            if position.position.xy().distance(destination.xy()) < NAV_ROUTE_MIN_DIST_CM {
+            // Short hops go straight unless that crosses blocked ground
+            // (a bank, a ledge, a wall right next to the bot).
+            if position.position.xy().distance(destination.xy()) < NAV_ROUTE_MIN_DIST_CM
+                && nav_grid.segment_walkable(
+                    position.position.x,
+                    position.position.y,
+                    destination.x,
+                    destination.y,
+                )
+            {
                 if nav.is_some() {
                     commands.entity(entity).remove::<BotNavigation>();
                 }
                 continue;
             }
 
-            match find_route(
+            let mut goal = destination;
+            let mut route = find_route(
                 &mut commands,
                 entity,
                 nav_grid,
@@ -278,12 +300,33 @@ pub fn bot_navigation_system(
                 no_route.as_deref_mut(),
                 position.position,
                 destination,
-            ) {
+            );
+            if route.is_none() {
+                // Unreachable as ordered (across a moat, up a cliff, onto a
+                // ledge): head for the nearest spot of it the bot can reach.
+                if let Some(reachable) = nav_grid
+                    .reachable_point(position.position, destination, NAV_RETARGET_CM)
+                    .filter(|point| point.xy().distance(destination.xy()) > NAV_GOAL_EPS_CM)
+                {
+                    goal = reachable;
+                    route = find_route(
+                        &mut commands,
+                        entity,
+                        nav_grid,
+                        position.zone_id,
+                        no_route.as_deref_mut(),
+                        position.position,
+                        reachable,
+                    );
+                }
+            }
+
+            match route {
                 Some(waypoints) => {
                     let first = waypoints[0];
                     let fed = split_leg(position.position, first);
                     let route = BotNavigation {
-                        goal: destination,
+                        goal,
                         waypoints,
                         leg: Some(fed),
                         leg_waypoint: Some(first),
@@ -303,9 +346,31 @@ pub fn bot_navigation_system(
                     next_command.has_sent_server_message = false;
                 }
                 None => {
-                    // Unreachable: walk direct (server never jams).
                     if nav.is_some() {
                         commands.entity(entity).remove::<BotNavigation>();
+                    }
+                    if nav_grid.segment_walkable(
+                        position.position.x,
+                        position.position.y,
+                        goal.x,
+                        goal.y,
+                    ) {
+                        // Close enough to walk straight on free ground.
+                        if goal != destination {
+                            if let Some(CommandData::Move {
+                                destination: dest, ..
+                            }) = next_command.command.as_mut()
+                            {
+                                *dest = goal;
+                            }
+                            next_command.has_sent_server_message = false;
+                        }
+                    } else {
+                        // Nowhere reachable to go: stand still rather than
+                        // walk through a wall, off a cliff or into deep water
+                        // (a stranded bot is then put back by
+                        // `bot_rescue_stranded_system`).
+                        *next_command = NextCommand::with_stop(true);
                     }
                 }
             }
@@ -391,6 +456,7 @@ pub fn bot_separation_system(
     >,
     mut client_entity_list: ResMut<ClientEntityList>,
     game_config: Res<GameConfig>,
+    game_data: Res<GameData>,
     time: Res<Time>,
 ) {
     if !game_config.enable_bot_navigation {
@@ -453,8 +519,20 @@ pub fn bot_separation_system(
         }
         if count > 0 {
             let step = (push / count as f32).xy().clamp_length_max(max_step);
-            position.position.x += step.x;
-            position.position.y += step.y;
+            let pushed = position.position.xy() + step;
+            // Never shove anyone off walkable ground (into a moat, up a bank).
+            let nav_grid = game_data
+                .zones
+                .get_zone(position.zone_id)
+                .and_then(|zone| zone.nav_grid.as_ref());
+            if nav_grid.is_some_and(|nav_grid| {
+                nav_grid.is_blocked_world(pushed.x, pushed.y)
+                    && !nav_grid.is_blocked_world(position.position.x, position.position.y)
+            }) {
+                continue;
+            }
+            position.position.x = pushed.x;
+            position.position.y = pushed.y;
 
             if let (Some(client_entity), Some(mut sector)) =
                 (client_entity, client_entity_sector)
@@ -838,6 +916,153 @@ fn broadcast_move(
             move_mode: steer_move.move_mode,
         },
     );
+}
+
+/// How often bots are checked for being stranded.
+const RESCUE_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+/// How long a bot may stay stranded before it is put back.
+const RESCUE_AFTER: Duration = Duration::from_secs(4);
+/// The same while fighting: archers and mages may hit something from a bank.
+const RESCUE_AFTER_IN_COMBAT: Duration = Duration::from_secs(12);
+/// How far from a stranded bot walkable ground is searched.
+const RESCUE_SEARCH_CM: f32 = 6000.0;
+
+/// When the bot was first seen stranded (see `NavGrid::is_stranded`).
+#[derive(Component)]
+pub struct BotStranded {
+    since: Instant,
+}
+
+/// Puts back bots that ended up where no one can walk: on blocked ground (in
+/// a moat, on a cliff face, inside a wall) or in a free pocket that no
+/// designer placed point leads to (a moat bottom, a ledge top). Every route
+/// out of such a spot is refused, so the bot would otherwise stand there
+/// forever. It is moved to the nearest walkable ground of an anchored area,
+/// or the zone's start position, and rejoins the zone so every client
+/// respawns it there.
+#[allow(clippy::type_complexity)]
+pub fn bot_rescue_stranded_system(
+    mut commands: Commands,
+    mut query: Query<
+        (
+            Entity,
+            &BotRole,
+            &ClientEntity,
+            &ClientEntitySector,
+            &mut Position,
+            &mut Command,
+            &mut NextCommand,
+            Option<&BotStranded>,
+        ),
+        (Without<GameClient>, Without<Dead>, Without<LlmBuddyBot>),
+    >,
+    mut client_entity_list: ResMut<ClientEntityList>,
+    game_data: Res<GameData>,
+    game_config: Res<GameConfig>,
+    mut last_check: Local<Option<Instant>>,
+) {
+    if !game_config.enable_bot_navigation {
+        return;
+    }
+    let now = Instant::now();
+    if last_check.is_some_and(|last| now.duration_since(last) < RESCUE_CHECK_INTERVAL) {
+        return;
+    }
+    *last_check = Some(now);
+
+    for (
+        entity,
+        role,
+        client_entity,
+        client_entity_sector,
+        mut position,
+        mut command,
+        mut next_command,
+        stranded,
+    ) in query.iter_mut()
+    {
+        // Vendors keep their stall wherever it was set up.
+        if *role == BotRole::Vendor {
+            continue;
+        }
+        let Some(zone_data) = game_data.zones.get_zone(position.zone_id) else {
+            continue;
+        };
+        let Some(nav_grid) = zone_data.nav_grid.as_ref() else {
+            continue;
+        };
+        if !nav_grid.is_stranded(position.position.x, position.position.y) {
+            if stranded.is_some() {
+                commands.entity(entity).remove::<BotStranded>();
+            }
+            continue;
+        }
+        let Some(stranded) = stranded else {
+            commands.entity(entity).insert(BotStranded { since: now });
+            continue;
+        };
+        let patience = if matches!(command.command, CommandData::Attack { .. }) {
+            RESCUE_AFTER_IN_COMBAT
+        } else {
+            RESCUE_AFTER
+        };
+        if now.duration_since(stranded.since) < patience {
+            continue;
+        }
+
+        let destination = nav_grid
+            .rescue_point(position.position, RESCUE_SEARCH_CM)
+            .or_else(|| nav_grid.rescue_point(zone_data.start_position, RESCUE_SEARCH_CM))
+            .unwrap_or(zone_data.start_position);
+        log::debug!(
+            "Rescuing stranded bot {:?} in zone {:?}: ({:.0}, {:.0}) -> ({:.0}, {:.0})",
+            entity,
+            position.zone_id,
+            position.position.x,
+            position.position.y,
+            destination.x,
+            destination.y,
+        );
+
+        // Same placement as LLM buddy bot teleports: leave, move, rejoin
+        // with a new client entity id so clients respawn the bot there.
+        let previous_position = position.clone();
+        client_entity_leave_zone(
+            &mut commands,
+            &mut client_entity_list,
+            entity,
+            client_entity,
+            client_entity_sector,
+            &previous_position,
+        );
+        position.position = destination;
+        *command = Command::with_stop();
+        *next_command = NextCommand::default();
+        commands
+            .entity(entity)
+            .remove::<(BotStranded, BotNavigation, BotNavNoRoute)>();
+        match client_entity_join_zone(
+            &mut commands,
+            &mut client_entity_list,
+            entity,
+            ClientEntityType::Character,
+            &position,
+        ) {
+            Ok(_) => {
+                commands
+                    .entity(entity)
+                    .insert(ClientEntityVisibility::new());
+            }
+            Err(error) => {
+                log::error!(
+                    "Failed to put stranded bot {:?} back into zone {:?}: {:?}",
+                    entity,
+                    position.zone_id,
+                    error
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]

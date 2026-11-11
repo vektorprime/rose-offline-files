@@ -1,0 +1,15 @@
+[package]
+name = "rose-nav-map"
+version = { workspace = true }
+authors = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+rose-data = { path = "../../rose-data" }
+rose-data-irose = { path = "../../rose-data-irose" }
+rose-file-readers = { path = "../../rose-file-readers" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+log = { workspace = true }
+png = "0.18"
+simplelog = { workspace = true }

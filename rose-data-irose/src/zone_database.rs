@@ -2,18 +2,20 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::math::{Quat, Vec2, Vec3, Vec3Swizzles};
-use log::{debug, warn};
+use log::{debug, info, warn};
 
 use rose_data::{
-    NavGrid, NpcConversationId, NpcId, SkyboxId, StringDatabase, ZoneData, ZoneDatabase, ZoneEventObject,
-    ZoneId, ZoneList, ZoneListEntry, ZoneMonsterSpawnPoint, ZoneNpcSpawn, WORLD_TICKS_PER_DAY,
-    NAV_AGENT_RADIUS_CM,
+    bake_nav_grid, NavBakeInput, NavBakeParams, NavBakeReport, NavGrid, NpcConversationId, NpcId,
+    SkyboxId, StringDatabase, ZoneData, ZoneDatabase, ZoneEventObject, ZoneId, ZoneList,
+    ZoneListEntry, ZoneMonsterSpawnPoint, ZoneNpcSpawn, WORLD_TICKS_PER_DAY,
 };
 use rose_file_readers::{
     stb_column, IfoEventObject, IfoFile, IfoMonsterSpawn, IfoMonsterSpawnPoint, IfoNpc,
-    IfoReadOptions, StbFile, VfsFile, VfsPath, VfsPathBuf, VirtualFilesystem, ZmsFile, ZonFile,
-    ZonReadOptions, ZscCollisionFlags, ZscFile,
+    IfoReadOptions, StbFile, VfsPath, VfsPathBuf, VirtualFilesystem, ZonFile, ZonReadOptions,
+    ZscFile,
 };
+
+use crate::zone_nav::{NavAssets, ZoneNavCollector, ZoneNavStats};
 
 const MIN_SECTOR_SIZE: u32 = 5000;
 const MAX_SECTOR_SIZE: u32 = 12000;
@@ -145,130 +147,14 @@ fn create_event_object(
     }
 }
 
-/// Sampler counters proving which obstacle sources actually contribute.
-/// Logged per zone at startup so the blocker rule stays observable.
-#[derive(Default)]
-struct NavBakeStats {
-    ifo_blocks: usize,
-    collision_obbs: usize,
-    cnst_instances: usize,
-    deco_instances: usize,
-    parts_with_shape: usize,
-    parts_height_only: usize,
-    parts_passthrough: usize,
-    parts_blocking: usize,
-    zms_cache_hits: usize,
-    zms_reads: usize,
-    zms_failures: usize,
-    fallback_radii: usize,
-    obb_scale_sum: f64,
-    obb_scale_min: f32,
-    obb_scale_max: f32,
-}
-
-/// Unscaled horizontal mesh radius in cm, cached globally across zones.
-fn zms_base_radius(
-    vfs: &VirtualFilesystem,
-    mesh_path: &VfsPathBuf,
-    cache: &mut HashMap<String, Option<f32>>,
-    stats: &mut NavBakeStats,
-) -> Option<f32> {
-    // Borrowed for the lookup: most calls are cache hits and need no owned key.
-    let key = mesh_path.path().to_string_lossy();
-    if let Some(cached) = cache.get(&*key) {
-        stats.zms_cache_hits += 1;
-        return *cached;
-    }
-    let key = key.into_owned();
-    stats.zms_reads += 1;
-    // Cap unique mesh reads so a corrupt zone cannot stall startup.
-    if stats.zms_reads > 4000 {
-        cache.insert(key, None);
-        return None;
-    }
-    let radius = vfs
-        .open_file(VfsPath::from(mesh_path))
-        .ok()
-        .and_then(|file| match file {
-            VfsFile::Buffer(bytes) => ZmsFile::read_bounds(&bytes),
-            VfsFile::View(bytes) => ZmsFile::read_bounds(bytes),
-        })
-        .map(|(bb_min, bb_max)| {
-            ((bb_max[0] - bb_min[0]).max(bb_max[1] - bb_min[1]).max(0.0)) * 0.5
-        })
-        .filter(|r| r.is_finite() && *r > 0.0);
-    if radius.is_none() {
-        stats.zms_failures += 1;
-    }
-    cache.insert(key, radius);
-    radius
-}
-
-/// Footprint radius (cm, unscaled-center) for one cnst/deco instance.
-/// Mirrors the client's wall rule in
-/// `rose-offline-client/src/zone_loader/spawning/objects.rs`: parts with a
-/// collision shape that are neither `HEIGHT_ONLY` (walkable steps) nor
-/// `PASSTHROUGH` count as walls. Returns `None` when nothing blocks.
-#[allow(clippy::too_many_arguments)]
-fn blocker_radius(
-    zsc: &ZscFile,
-    object_id: usize,
-    obj_scale_x: f32,
-    obj_scale_y: f32,
-    vfs: &VirtualFilesystem,
-    mesh_cache: &mut HashMap<String, Option<f32>>,
-    stats: &mut NavBakeStats,
-) -> Option<f32> {
-    let zsc_object = zsc.objects.get(object_id)?;
-    let mut radius = 0.0f32;
-    let mut blocking = false;
-    for part in zsc_object.parts.iter() {
-        if part.collision_shape.is_none() {
-            continue;
-        }
-        stats.parts_with_shape += 1;
-        if part.collision_flags.contains(ZscCollisionFlags::HEIGHT_ONLY) {
-            stats.parts_height_only += 1;
-            continue;
-        }
-        if part.collision_flags.contains(ZscCollisionFlags::PASSTHROUGH) {
-            stats.parts_passthrough += 1;
-            continue;
-        }
-        stats.parts_blocking += 1;
-        blocking = true;
-
-        let part_scale = part.scale.x.max(part.scale.y).max(0.01);
-        let obj_scale = obj_scale_x.max(obj_scale_y).max(0.01);
-        let offset_cm = (part.position.x * part.position.x + part.position.y * part.position.y)
-            .sqrt()
-            * obj_scale;
-
-        if let Some(mesh_path) = zsc.meshes.get(part.mesh_id as usize) {
-            if let Some(base) = zms_base_radius(vfs, mesh_path, mesh_cache, stats) {
-                radius = radius.max(offset_cm + base * part_scale * obj_scale);
-                continue;
-            }
-        }
-        // Mesh or bounds unavailable: fall back to part spread + door width.
-        stats.fallback_radii += 1;
-        radius = radius.max(offset_cm + 200.0 * part_scale * obj_scale);
-    }
-    if blocking {
-        Some(radius.max(100.0))
-    } else {
-        None
-    }
-}
-
 fn load_zone(
     vfs: &VirtualFilesystem,
     data: &StbZone,
     string_database: &StringDatabase,
     id: usize,
-    mesh_radius_cache: &mut HashMap<String, Option<f32>>,
+    nav_assets: &mut NavAssets,
     zsc_cache: &mut HashMap<String, Option<ZscFile>>,
-) -> Result<ZoneData, LoadZoneError> {
+) -> Result<(ZoneData, Option<(NavBakeInput, ZoneNavStats)>), LoadZoneError> {
     let zone_file = VfsPath::from(data.get_zone_file(id).ok_or(LoadZoneError::NotExists)?);
     let zone_base_directory = zone_file
         .path()
@@ -311,16 +197,16 @@ fn load_zone(
         skip_npcs: false,
         skip_animated_objects: true,
         // Loaded (not skipped) for server-side navigation baking: invisible
-        // walls (collision) + buildings/props (cnst/deco) are what bots must
-        // route around. Matches client collider sources in
-        // `rose-offline-client/src/zone_loader/spawning.rs`.
+        // walls (collision), buildings/props (cnst/deco), water planes and
+        // warp gates shape where bots can walk. Matches client collider
+        // sources in `rose-offline-client/src/zone_loader/spawning.rs`.
         skip_collision_objects: false,
         skip_cnst_objects: false,
         skip_deco_objects: false,
         skip_effect_objects: true,
         skip_sound_objects: true,
-        skip_water_planes: true,
-        skip_warp_objects: true,
+        skip_water_planes: false,
+        skip_warp_objects: false,
     };
 
     // ZSC tables resolve cnst/deco object ids to collision shapes. Missing
@@ -337,20 +223,16 @@ fn load_zone(
     let zsc_cnst: Option<&ZscFile> = cnst_table.and_then(|p| zsc_cache.get(p)?.as_ref());
     let zsc_deco: Option<&ZscFile> = deco_table.and_then(|p| zsc_cache.get(p)?.as_ref());
     if zsc_cnst.is_none() {
-        warn!("Nav bake zone {}: missing CNST table, skipping prop blockers", id);
+        warn!("Nav bake zone {}: missing CNST table, skipping buildings", id);
     }
     if zsc_deco.is_none() {
-        warn!("Nav bake zone {}: missing DECO table, skipping prop blockers", id);
+        warn!("Nav bake zone {}: missing DECO table, skipping props", id);
     }
 
-    let mut nav_stats = NavBakeStats {
-        obb_scale_min: f32::MAX,
-        ..Default::default()
-    };
-    // (world_x, world_y, radius_cm)
-    let mut nav_circles: Vec<(f32, f32, f32)> = Vec::new();
-    // (world_x, world_y, half_x_cm, half_y_cm, yaw_rad)
-    let mut nav_obbs: Vec<(f32, f32, f32, f32, f32)> = Vec::new();
+    let mut nav_collector = ZoneNavCollector::new(
+        16.0 * zon_file.grid_per_patch * zon_file.grid_size,
+        objects_offset,
+    );
 
     // Most of the 64x64 block names do not exist. Skip the ones no device can
     // open (same blocks in the same order); a device that cannot list the
@@ -385,68 +267,17 @@ fn load_zone(
                     )
                 }));
 
-                // --- Nav bake: collect blockers in world (offset) coordinates.
-                nav_stats.ifo_blocks += 1;
-                for collision in ifo_file.collision_objects.iter() {
-                    // Invisible walls: file-frame up is +Z (client remaps quat
-                    // (x,y,z,w) -> (x,z,-y,w)), so yaw = 2*atan2(z, w).
-                    let yaw = 2.0 * collision.rotation.z.atan2(collision.rotation.w);
-                    let sx = collision.scale.x.abs();
-                    let sy = collision.scale.y.abs();
-                    nav_stats.collision_obbs += 1;
-                    nav_stats.obb_scale_sum += sx.max(sy) as f64;
-                    nav_stats.obb_scale_min = nav_stats.obb_scale_min.min(sx.max(sy));
-                    nav_stats.obb_scale_max = nav_stats.obb_scale_max.max(sx.max(sy));
-                    // Scales are box extents in cm; floor at door width so
-                    // unit-scale entries still block.
-                    nav_obbs.push((
-                        collision.position.x + objects_offset.x,
-                        collision.position.y + objects_offset.y,
-                        (sx * 0.5).max(150.0),
-                        (sy * 0.5).max(150.0),
-                        yaw,
-                    ));
-                }
-                if let Some(zsc) = zsc_cnst {
-                    for instance in ifo_file.cnst_objects.iter() {
-                        nav_stats.cnst_instances += 1;
-                        if let Some(radius) = blocker_radius(
-                            zsc,
-                            instance.object_id as usize,
-                            instance.scale.x,
-                            instance.scale.y,
-                            vfs,
-                            &mut *mesh_radius_cache,
-                            &mut nav_stats,
-                        ) {
-                            nav_circles.push((
-                                instance.position.x + objects_offset.x,
-                                instance.position.y + objects_offset.y,
-                                radius,
-                            ));
-                        }
-                    }
-                }
-                if let Some(zsc) = zsc_deco {
-                    for instance in ifo_file.deco_objects.iter() {
-                        nav_stats.deco_instances += 1;
-                        if let Some(radius) = blocker_radius(
-                            zsc,
-                            instance.object_id as usize,
-                            instance.scale.x,
-                            instance.scale.y,
-                            vfs,
-                            &mut *mesh_radius_cache,
-                            &mut nav_stats,
-                        ) {
-                            nav_circles.push((
-                                instance.position.x + objects_offset.x,
-                                instance.position.y + objects_offset.y,
-                                radius,
-                            ));
-                        }
-                    }
-                }
+                nav_collector.add_block(
+                    vfs,
+                    nav_assets,
+                    zone_base_directory,
+                    block_x,
+                    block_y,
+                    &ifo_file,
+                    zsc_cnst,
+                    zsc_deco,
+                );
+
 
                 num_blocks += 1;
 
@@ -515,95 +346,18 @@ fn load_zone(
         num_sectors_y,
         start_position.xy(),
     );
-    // --- Nav bake: rasterize blockers + anchor bounds on real content.
-    // Bounds cover every blocker footprint plus every walk goal (spawns,
-    // npcs, start) so paths between any two goals stay inside the grid.
-    let mut nav_grid = None;
-    if !nav_circles.is_empty() || !nav_obbs.is_empty() {
-        let mut min_x = f32::MAX;
-        let mut min_y = f32::MAX;
-        let mut max_x = f32::MIN;
-        let mut max_y = f32::MIN;
-        let mut grow = |x: f32, y: f32, r: f32| {
-            min_x = min_x.min(x - r);
-            min_y = min_y.min(y - r);
-            max_x = max_x.max(x + r);
-            max_y = max_y.max(y + r);
-        };
-        for (x, y, r) in nav_circles.iter() {
-            grow(*x, *y, *r);
-        }
-        for (x, y, hx, hy, _) in nav_obbs.iter() {
-            grow(*x, *y, hx.max(*hy));
-        }
-        for spawn in monster_spawns.iter() {
-            grow(spawn.position.x, spawn.position.y, 0.0);
-        }
-        for npc in npcs.iter() {
-            grow(npc.position.x, npc.position.y, 0.0);
-        }
-        grow(start_position.x, start_position.y, 0.0);
-
-        if min_x < max_x && min_y < max_y {
-            const NAV_MARGIN_CM: f32 = 800.0;
-            let mut grid = NavGrid::covering(
-                min_x - NAV_MARGIN_CM,
-                min_y - NAV_MARGIN_CM,
-                max_x + NAV_MARGIN_CM,
-                max_y + NAV_MARGIN_CM,
-            );
-            for (x, y, r) in nav_circles.iter() {
-                grid.mark_circle(*x, *y, *r + NAV_AGENT_RADIUS_CM);
-            }
-            for (x, y, hx, hy, yaw) in nav_obbs.iter() {
-                grid.mark_obb(
-                    *x,
-                    *y,
-                    *hx + NAV_AGENT_RADIUS_CM,
-                    *hy + NAV_AGENT_RADIUS_CM,
-                    *yaw,
-                );
-            }
-            debug!(
-                "Nav bake zone {}: {}x{} cells @ {:.0}cm, blocked {}/{} cells, obbs={}, circles={} (cnst={}, deco={}), parts shape={} blocking={} (height_only={}, passthrough={}), zms reads={} hits={} fail={} fallback={}",
-                id,
-                grid.width,
-                grid.height,
-                grid.cell_cm,
-                grid.blocked_cell_count(),
-                grid.blocked.len(),
-                nav_stats.collision_obbs,
-                nav_circles.len(),
-                nav_stats.cnst_instances,
-                nav_stats.deco_instances,
-                nav_stats.parts_with_shape,
-                nav_stats.parts_blocking,
-                nav_stats.parts_height_only,
-                nav_stats.parts_passthrough,
-                nav_stats.zms_reads,
-                nav_stats.zms_cache_hits,
-                nav_stats.zms_failures,
-                nav_stats.fallback_radii,
-            );
-            if nav_stats.collision_obbs > 0 {
-                debug!(
-                    "Nav bake zone {}: obb scale avg={:.1} min={:.1} max={:.1}",
-                    id,
-                    nav_stats.obb_scale_sum / nav_stats.collision_obbs as f64,
-                    nav_stats.obb_scale_min,
-                    nav_stats.obb_scale_max,
-                );
-            }
-            nav_grid = Some(grid);
-        }
-    } else {
-        debug!(
-            "Nav bake zone {}: no blockers found (obbs=0 circles=0), grid skipped",
-            id
-        );
+    // --- Nav bake input: designer placed walk goals anchor the walkable
+    // areas (see `NavGrid::is_stranded`). Baked later, several zones at once.
+    let mut nav_anchors: Vec<Vec3> = vec![start_position];
+    nav_anchors.extend(revive_positions.iter().copied());
+    nav_anchors.extend(npcs.iter().map(|npc| npc.position));
+    nav_anchors.extend(monster_spawns.iter().map(|spawn| spawn.position));
+    let nav_input = nav_collector.finish(nav_anchors);
+    if nav_input.is_none() {
+        debug!("Nav bake zone {}: no terrain blocks, grid skipped", id);
     }
 
-    Ok(ZoneData {
+    let zone_data = ZoneData {
         id: ZoneId::new(id as u16).ok_or(LoadZoneError::NotExists)?,
         name,
         description,
@@ -645,8 +399,71 @@ fn load_zone(
             .unwrap_or((5 * WORLD_TICKS_PER_DAY / 6) as u32),
         skybox_id: data.get_zone_skybox_id(id),
         planet: data.get_zone_planet(id).unwrap_or(0) as usize,
-        nav_grid,
-    })
+        nav_grid: None,
+    };
+    Ok((zone_data, nav_input))
+}
+
+/// Bake the pending zones' walkability grids in parallel (one thread each)
+/// and store them on their `ZoneData`.
+fn bake_pending_zones(
+    zones: &mut [Option<ZoneData>],
+    pending: &mut Vec<(usize, NavBakeInput, ZoneNavStats)>,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let params = NavBakeParams::default();
+    let baked: Vec<(usize, NavGrid, NavBakeReport, ZoneNavStats)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = pending
+            .drain(..)
+            .map(|(id, input, stats)| {
+                let params = &params;
+                scope.spawn(move || {
+                    let (grid, report) = bake_nav_grid(&input, params);
+                    (id, grid, report, stats)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .filter_map(|handle| handle.join().ok())
+            .collect()
+    });
+    for (id, grid, report, stats) in baked {
+        debug!(
+            "Nav bake zone {}: {}x{} cells @ {:.0}cm in {} ms; free {} | wall {} slope {} ledge {} no-floor {} water {} warp {} void {}; object floor cells {}, surfaces {}/{} reachable, triangles floor {} wall {}; terrain blocks {} (missing {}), placements {}, parts {} (missing meshes {}), invisible walls {}, warps {}, water planes {}",
+            id,
+            report.width,
+            report.height,
+            report.cell_cm,
+            report.millis,
+            report.free_cells,
+            report.wall_cells,
+            report.slope_cells,
+            report.ledge_cells,
+            report.no_floor_cells,
+            report.water_cells,
+            report.warp_cells,
+            report.void_cells,
+            report.object_floor_cells,
+            report.reachable_surfaces,
+            report.surfaces,
+            report.floor_triangles,
+            report.wall_triangles,
+            stats.terrain_blocks,
+            stats.missing_terrain_blocks,
+            stats.placements,
+            stats.parts,
+            stats.missing_meshes,
+            stats.collision_walls,
+            stats.warps,
+            stats.water_planes,
+        );
+        if let Some(Some(zone)) = zones.get_mut(id) {
+            zone.nav_grid = Some(grid);
+        }
+    }
 }
 
 fn ensure_zone_slot<T>(zones: &mut Vec<Option<T>>, id: usize) {
@@ -839,22 +656,48 @@ pub fn get_zone_database(
     let mut zones = Vec::with_capacity(data.rows());
     zones.push(None); // Zone ID 0
     // Shared across zones: most prop meshes repeat everywhere, so later zones
-    // bake almost entirely from cache.
-    let mut mesh_radius_cache: HashMap<String, Option<f32>> = HashMap::new();
+    // read almost entirely from cache.
+    let mut nav_assets = NavAssets::new(vfs);
     let mut zsc_cache: HashMap<String, Option<ZscFile>> = HashMap::new();
+    // Zones load (file reads) one by one; their walkability grids bake in
+    // parallel batches, bounding how many bake inputs are held at once.
+    let bake_threads = std::thread::available_parallelism()
+        .map_or(2, |threads| threads.get())
+        .clamp(1, 8);
+    let mut pending = Vec::with_capacity(bake_threads);
+    let started = std::time::Instant::now();
     for id in 1..data.rows() {
-        zones.push(
-            load_zone(
-                vfs,
-                &data,
-                &string_database,
-                id,
-                &mut mesh_radius_cache,
-                &mut zsc_cache,
-            )
-            .ok(),
-        );
+        match load_zone(
+            vfs,
+            &data,
+            &string_database,
+            id,
+            &mut nav_assets,
+            &mut zsc_cache,
+        ) {
+            Ok((zone, nav_input)) => {
+                zones.push(Some(zone));
+                if let Some((input, stats)) = nav_input {
+                    pending.push((id, input, stats));
+                }
+            }
+            Err(_) => zones.push(None),
+        }
+        if pending.len() >= bake_threads {
+            bake_pending_zones(&mut zones, &mut pending);
+        }
     }
+    bake_pending_zones(&mut zones, &mut pending);
+    info!(
+        "Zone walkability baked for {} zones in {:.1}s ({} meshes read, {} unreadable)",
+        zones
+            .iter()
+            .filter(|zone| zone.as_ref().is_some_and(|zone| zone.nav_grid.is_some()))
+            .count(),
+        started.elapsed().as_secs_f32(),
+        nav_assets.mesh_reads(),
+        nav_assets.mesh_failures(),
+    );
 
     let needs_ocean_zone = zones.get(OCEAN_ZONE_ID).map_or(true, Option::is_none);
     if needs_ocean_zone && vfs.exists(OCEAN_ZONE_FILE) {

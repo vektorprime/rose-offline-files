@@ -5,8 +5,10 @@ use bevy::{
 };
 
 use crate::game::{
-    components::{ClientEntity, ClientEntitySector, Command, CommandData, MoveSpeed, Position},
-    resources::ClientEntityList,
+    components::{
+        ClientEntity, ClientEntitySector, Command, CommandData, GameClient, MoveSpeed, Position,
+    },
+    resources::{ClientEntityList, GameData},
 };
 
 /// Server-authoritative position update system.
@@ -16,8 +18,10 @@ use crate::game::{
 /// Position validation:
 /// - Movement speed is enforced based on MoveSpeed component
 /// - Maximum movement per tick is limited to prevent teleportation
-/// - Z coordinate (height) is preserved during horizontal movement
-/// - Client collision reports are validated in game_server_system.rs
+/// - Z coordinate (height) of players is preserved during horizontal movement
+///   (set by their client's collision reports, validated in
+///   game_server_system.rs); everything else (bots, monsters, NPCs) stands
+///   on the zone's baked floor height where the nav grid has one
 pub fn update_position_system(
     mut query: Query<(
         Entity,
@@ -26,12 +30,14 @@ pub fn update_position_system(
         &MoveSpeed,
         &mut Position,
         &Command,
+        Option<&GameClient>,
     )>,
     mut client_entity_list: ResMut<ClientEntityList>,
+    game_data: Res<GameData>,
     time: Res<Time>,
 ) {
     query.iter_mut().for_each(
-        |(entity, client_entity, client_entity_sector, move_speed, mut position, command)| {
+        |(entity, client_entity, client_entity_sector, move_speed, mut position, command, game_client)| {
             let CommandData::Move { destination, .. } = command.command else {
                 return;
             };
@@ -69,6 +75,20 @@ pub fn update_position_system(
                     position.position.x += clamped_move_vector.x;
                     position.position.y += clamped_move_vector.y;
                     // Z is preserved - no change needed (will be set by MoveCollision from client)
+                }
+            }
+
+            // Server-driven movers follow the ground (players report theirs).
+            if game_client.is_none() {
+                if let Some(floor) = game_data
+                    .zones
+                    .get_zone(position.zone_id)
+                    .and_then(|zone| zone.nav_grid.as_ref())
+                    .and_then(|nav_grid| {
+                        nav_grid.floor_height_world(position.position.x, position.position.y)
+                    })
+                {
+                    position.position.z = floor;
                 }
             }
 

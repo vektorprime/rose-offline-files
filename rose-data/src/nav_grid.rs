@@ -1,12 +1,19 @@
-//! Server-side 2D navigation grid for bot pathfinding.
+//! Server-side 2.5D navigation grid for bot pathfinding.
 //!
 //! Bots (big-brain thinkers) and monster AI issue straight-line
 //! `CommandData::Move` orders with no knowledge of buildings, walls or props.
 //! The client avoids these with Rapier shape-casts, but the headless server
 //! has no physics world. This grid is baked at zone load from the same source
-//! data the client builds colliders from (IFO instances + ZSC collision
-//! shapes + ZMS mesh bounds) and gives bots a cheap `find_path` query so they
-//! can route around obstacles instead of walking through them.
+//! data the client builds colliders from (HIM terrain, IFO instances + ZSC
+//! collision parts + ZMS meshes, water planes; see `nav_bake`) and gives bots
+//! a cheap `find_path` query so they can route around obstacles, cliffs and
+//! deep water instead of walking through them.
+//!
+//! Each cell stores why it is blocked (`NAV_BLOCK_*` bits, 0 = walkable) and,
+//! for baked grids, the floor height bots stand on. Free cells are grouped
+//! into 4-connected components; components holding a designer placed point
+//! (start, revive, NPC, monster spawn) are "anchored". A free pocket that is
+//! not anchored (a moat bottom, a ledge top) is where a bot would be stranded.
 //!
 //! Coordinates are game-space centimeters, matching `Position.position` xy.
 
@@ -23,6 +30,34 @@ pub const NAV_PREFERRED_CELL_CM: f32 = 200.0;
 /// Bot body radius used to dilate blockers (matches client 0.4m wall ball).
 pub const NAV_AGENT_RADIUS_CM: f32 = 40.0;
 
+/// Blocked by a wall in the body band, or a legacy disc / box blocker.
+pub const NAV_BLOCK_WALL: u8 = 1 << 0;
+/// Terrain steeper than the walkable slope (cliffs, river and moat banks).
+pub const NAV_BLOCK_SLOPE: u8 = 1 << 1;
+/// A neighbouring floor is more than a step higher (platform and deck edges).
+pub const NAV_BLOCK_LEDGE: u8 = 1 << 2;
+/// Under objects, with no standable surface reachable from open ground.
+pub const NAV_BLOCK_NO_FLOOR: u8 = 1 << 3;
+/// Outside the zone's terrain blocks.
+pub const NAV_BLOCK_VOID: u8 = 1 << 4;
+/// Water deeper than wading depth above the floor.
+pub const NAV_BLOCK_WATER: u8 = 1 << 5;
+/// Warp gate keep-out: walking in would change zone.
+pub const NAV_BLOCK_WARP: u8 = 1 << 6;
+/// Within the body radius of another blocked cell.
+pub const NAV_BLOCK_CLEARANCE: u8 = 1 << 7;
+
+/// Floor heights are stored as `i16` in units of this many cm (+-1638 m).
+pub const NAV_HEIGHT_UNIT_CM: f32 = 5.0;
+/// Stored floor height of cells without one.
+const NAV_NO_FLOOR: i16 = i16::MIN;
+/// How far a route start snaps to the nearest free cell.
+const NAV_START_SNAP_CM: f32 = 1000.0;
+/// How far a route goal snaps to the nearest free cell.
+const NAV_GOAL_SNAP_CM: f32 = 1600.0;
+/// How far an anchor point snaps to the nearest free cell.
+const NAV_ANCHOR_SNAP_CM: f32 = 500.0;
+
 #[derive(Clone, Debug)]
 pub struct NavGrid {
     /// World x (cm) of cell (0,0) corner.
@@ -33,13 +68,21 @@ pub struct NavGrid {
     pub cell_cm: f32,
     pub width: u32,
     pub height: u32,
-    /// Row-major blocked flags (`y * width + x`), 0 = free, 1 = blocked.
-    /// Mark cells through `set_blocked_cell` / `mark_*` so the cached
-    /// component labels are invalidated.
+    /// Row-major blocked flags (`y * width + x`): 0 = free, otherwise the
+    /// `NAV_BLOCK_*` reasons. Mark cells through `set_blocked_cell` /
+    /// `mark_cell` / `mark_*` so the cached component labels are invalidated.
     pub blocked: Vec<u8>,
+    /// Row-major floor height per cell in `NAV_HEIGHT_UNIT_CM` units
+    /// (`i16::MIN` = unknown). Empty for grids not baked from terrain.
+    floor: Vec<i16>,
+    /// Designer placed walk goals (start, revive, NPC, spawn points). Their
+    /// components are the anchored ones; no anchors = everything anchored.
+    anchors: Vec<(f32, f32)>,
     /// Lazily built connected-component label per cell (0 = blocked), used to
     /// reject unreachable goals without a full A* flood.
     components: OnceLock<Vec<u32>>,
+    /// Lazily built per label (index = label): does it hold an anchor?
+    anchored: OnceLock<Vec<bool>>,
 }
 
 /// Snapped start and goal cells of a route query (row-major cell indices).
@@ -115,8 +158,81 @@ impl NavGrid {
             width: width.max(1),
             height: height.max(1),
             blocked: vec![0; width.max(1) as usize * height.max(1) as usize],
+            floor: Vec::new(),
+            anchors: Vec::new(),
             components: OnceLock::new(),
+            anchored: OnceLock::new(),
         }
+    }
+
+    /// Drop cached component data after a mutation.
+    fn invalidate(&mut self) {
+        self.components.take();
+        self.anchored.take();
+    }
+
+    /// Set per-cell floor heights (row-major cm, NaN = unknown).
+    pub fn set_floor_heights(&mut self, heights: &[f32]) {
+        let cells = self.width as usize * self.height as usize;
+        self.floor = (0..cells)
+            .map(|i| match heights.get(i) {
+                Some(h) if h.is_finite() => {
+                    (h / NAV_HEIGHT_UNIT_CM).round().clamp(-32767.0, 32767.0) as i16
+                }
+                _ => NAV_NO_FLOOR,
+            })
+            .collect();
+    }
+
+    /// Set the designer placed walk goals that define anchored components.
+    pub fn set_anchors(&mut self, anchors: Vec<(f32, f32)>) {
+        self.anchors = anchors;
+        self.anchored.take();
+    }
+
+    /// Floor height (cm) bots stand on at a world point, if baked.
+    pub fn floor_height_world(&self, x: f32, y: f32) -> Option<f32> {
+        let (cx, cy) = self.world_to_cell(x, y)?;
+        let value = *self.floor.get(self.index(cx, cy))?;
+        (value != NAV_NO_FLOOR).then(|| value as f32 * NAV_HEIGHT_UNIT_CM)
+    }
+
+    /// `point` with its z replaced by the floor height where one is known.
+    pub fn on_floor(&self, point: Vec3) -> Vec3 {
+        match self.floor_height_world(point.x, point.y) {
+            Some(z) => Vec3::new(point.x, point.y, z),
+            None => point,
+        }
+    }
+
+    /// Blocked reasons of a cell (out of bounds = `NAV_BLOCK_VOID`).
+    pub fn cell_flags(&self, cx: i32, cy: i32) -> u8 {
+        if cx < 0 || cy < 0 || cx >= self.width as i32 || cy >= self.height as i32 {
+            return NAV_BLOCK_VOID;
+        }
+        self.blocked[cy as usize * self.width as usize + cx as usize]
+    }
+
+    /// Blocked reasons at a world point (out of bounds = `NAV_BLOCK_VOID`).
+    pub fn flags_world(&self, x: f32, y: f32) -> u8 {
+        match self.world_to_cell(x, y) {
+            Some((cx, cy)) => self.blocked[self.index(cx, cy)],
+            None => NAV_BLOCK_VOID,
+        }
+    }
+
+    /// Add blocked reasons to a cell.
+    pub fn mark_cell(&mut self, cx: u32, cy: u32, flags: u8) {
+        if flags != 0 && cx < self.width && cy < self.height {
+            let i = self.index(cx, cy);
+            self.blocked[i] |= flags;
+            self.invalidate();
+        }
+    }
+
+    /// Cells within `cm` (at least one).
+    fn rings(&self, cm: f32) -> u32 {
+        ((cm / self.cell_cm).ceil() as u32).max(1)
     }
 
     /// Build a grid covering `min..max` world bounds, growing the cell size
@@ -178,16 +294,159 @@ impl NavGrid {
     }
 
     pub fn set_blocked_cell(&mut self, cx: u32, cy: u32) {
-        if cx < self.width && cy < self.height {
-            let i = self.index(cx, cy);
-            self.blocked[i] = 1;
-            self.components.take();
-        }
+        self.mark_cell(cx, cy, NAV_BLOCK_WALL);
     }
 
     /// Component labels, built on first use after the last mutation.
     fn components(&self) -> &[u32] {
         self.components.get_or_init(|| self.label_components())
+    }
+
+    /// Anchored flag per component label, built on first use.
+    fn anchored_labels(&self) -> &[bool] {
+        self.anchored.get_or_init(|| {
+            let labels = self.components();
+            let max_label = labels.iter().copied().max().unwrap_or(0) as usize;
+            let mut anchored = vec![self.anchors.is_empty(); max_label + 1];
+            anchored[0] = false;
+            let rings = self.rings(NAV_ANCHOR_SNAP_CM);
+            for &(x, y) in self.anchors.iter() {
+                if let Some(cell) = self
+                    .world_to_cell(x, y)
+                    .and_then(|(cx, cy)| self.spiral_find(cx, cy, rings, |i| labels[i] != 0))
+                {
+                    anchored[labels[cell] as usize] = true;
+                }
+            }
+            anchored
+        })
+    }
+
+    /// Nearest cell (by square ring) around `(scx, scy)` within `max_rings`
+    /// whose row-major index satisfies `accept`.
+    fn spiral_find(
+        &self,
+        scx: u32,
+        scy: u32,
+        max_rings: u32,
+        accept: impl Fn(usize) -> bool,
+    ) -> Option<usize> {
+        let in_bounds = |cx: i32, cy: i32| {
+            cx >= 0 && cy >= 0 && cx < self.width as i32 && cy < self.height as i32
+        };
+        let try_cell = |cx: i32, cy: i32| {
+            if in_bounds(cx, cy) {
+                let i = cy as usize * self.width as usize + cx as usize;
+                if accept(i) {
+                    return Some(i);
+                }
+            }
+            None
+        };
+        let (scx, scy) = (scx as i32, scy as i32);
+        if let Some(i) = try_cell(scx, scy) {
+            return Some(i);
+        }
+        for ring in 1..=max_rings as i32 {
+            for dy in -ring..=ring {
+                for dx in [-ring, ring] {
+                    if let Some(i) = try_cell(scx + dx, scy + dy) {
+                        return Some(i);
+                    }
+                }
+            }
+            for dx in -ring + 1..ring {
+                for dy in [-ring, ring] {
+                    if let Some(i) = try_cell(scx + dx, scy + dy) {
+                        return Some(i);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// World point of a cell index, standing on its floor when known.
+    fn cell_point(&self, i: usize, fallback_z: f32) -> Vec3 {
+        let cx = (i % self.width as usize) as u32;
+        let cy = (i / self.width as usize) as u32;
+        let (x, y) = self.cell_to_world_center(cx, cy);
+        let z = match self.floor.get(i) {
+            Some(&value) if value != NAV_NO_FLOOR => value as f32 * NAV_HEIGHT_UNIT_CM,
+            _ => fallback_z,
+        };
+        Vec3::new(x, y, z)
+    }
+
+    /// Component label of the free cell a route from `x, y` would start on
+    /// (0 = none within the start snap distance).
+    pub fn component_at_world(&self, x: f32, y: f32) -> u32 {
+        let labels = self.components();
+        self.world_to_cell(x, y)
+            .and_then(|(cx, cy)| {
+                self.spiral_find(cx, cy, self.rings(NAV_START_SNAP_CM), |i| labels[i] != 0)
+            })
+            .map_or(0, |i| labels[i])
+    }
+
+    /// Whether a component label holds a designer placed walk goal.
+    pub fn is_anchored_component(&self, label: u32) -> bool {
+        self.anchored_labels()
+            .get(label as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// A bot at `x, y` is stranded when it stands on a blocked cell (in a
+    /// moat, on a cliff face) or in a free pocket without any anchor.
+    pub fn is_stranded(&self, x: f32, y: f32) -> bool {
+        let Some((cx, cy)) = self.world_to_cell(x, y) else {
+            return true;
+        };
+        let i = self.index(cx, cy);
+        self.blocked[i] != 0 || !self.is_anchored_component(self.components()[i])
+    }
+
+    /// A walkable point near `to` that an entity at `from` can actually walk
+    /// to: `to` itself when it is free and in `from`'s component, otherwise
+    /// the nearest such cell within `max_snap_cm`. When `from` is stranded,
+    /// any anchored component is accepted instead. The result stands on the
+    /// floor (z) where known.
+    pub fn reachable_point(&self, from: Vec3, to: Vec3, max_snap_cm: f32) -> Option<Vec3> {
+        let labels = self.components();
+        let anchored = self.anchored_labels();
+        let from_label = self.component_at_world(from.x, from.y);
+        let from_anchored = anchored.get(from_label as usize).copied().unwrap_or(false);
+        let accept = |i: usize| {
+            let label = labels[i];
+            label != 0
+                && if from_anchored {
+                    label == from_label
+                } else {
+                    anchored.get(label as usize).copied().unwrap_or(false)
+                }
+        };
+        let (gcx, gcy) = self.world_to_cell(to.x, to.y)?;
+        let i = self.spiral_find(gcx, gcy, self.rings(max_snap_cm), accept)?;
+        if i == self.index(gcx, gcy) {
+            return Some(self.on_floor(to));
+        }
+        Some(self.cell_point(i, to.z))
+    }
+
+    /// The nearest free cell of an anchored component within `max_radius_cm`
+    /// of `at`: where a stranded entity is put back, or a spawn is placed.
+    pub fn rescue_point(&self, at: Vec3, max_radius_cm: f32) -> Option<Vec3> {
+        let labels = self.components();
+        let anchored = self.anchored_labels();
+        let (cx, cy) = self.world_to_cell(at.x, at.y)?;
+        let i = self.spiral_find(cx, cy, self.rings(max_radius_cm), |i| {
+            anchored.get(labels[i] as usize).copied().unwrap_or(false)
+        })?;
+        if i == self.index(cx, cy) {
+            return Some(self.on_floor(at));
+        }
+        Some(self.cell_point(i, at.z))
     }
 
     /// Labels 4-connected free cells. A* moves in 8 directions but never cuts
@@ -241,8 +500,8 @@ impl NavGrid {
     /// Snapped start and goal cells for a route query, computed exactly as
     /// `find_path` does. `None` means `find_path` returns `None` too.
     pub fn route_key(&self, from_x: f32, from_y: f32, to_x: f32, to_y: f32) -> Option<NavRouteKey> {
-        let (sx, sy) = self.nearest_unblocked(from_x, from_y, 5)?;
-        let (gx, gy) = self.nearest_unblocked(to_x, to_y, 8)?;
+        let (sx, sy) = self.nearest_unblocked(from_x, from_y, self.rings(NAV_START_SNAP_CM))?;
+        let (gx, gy) = self.nearest_unblocked(to_x, to_y, self.rings(NAV_GOAL_SNAP_CM))?;
         let (scx, scy) = self.world_to_cell(sx, sy)?;
         let (gcx, gcy) = self.world_to_cell(gx, gy)?;
         Some((self.index(scx, scy) as u32, self.index(gcx, gcy) as u32))
@@ -300,34 +559,11 @@ impl NavGrid {
     /// Nearest free cell center to a world point (spiral search).
     pub fn nearest_unblocked(&self, x: f32, y: f32, max_radius_cells: u32) -> Option<(f32, f32)> {
         let (scx, scy) = self.world_to_cell(x, y)?;
-        if !self.is_blocked_cell(scx as i32, scy as i32) {
-            return Some(self.cell_to_world_center(scx, scy));
-        }
-        for ring in 1..=max_radius_cells {
-            for dy in -(ring as i32)..=(ring as i32) {
-                for dx in [-(ring as i32), ring as i32] {
-                    let cx = scx as i32 + dx;
-                    let cy = scy as i32 + dy;
-                    if !self.is_blocked_cell(cx, cy) {
-                        return Some(
-                            self.cell_to_world_center(cx as u32, cy as u32),
-                        );
-                    }
-                }
-            }
-            for dx in -(ring as i32) + 1..ring as i32 {
-                for dy in [-(ring as i32), ring as i32] {
-                    let cx = scx as i32 + dx;
-                    let cy = scy as i32 + dy;
-                    if !self.is_blocked_cell(cx, cy) {
-                        return Some(
-                            self.cell_to_world_center(cx as u32, cy as u32),
-                        );
-                    }
-                }
-            }
-        }
-        None
+        let i = self.spiral_find(scx, scy, max_radius_cells, |i| self.blocked[i] == 0)?;
+        Some(self.cell_to_world_center(
+            (i % self.width as usize) as u32,
+            (i / self.width as usize) as u32,
+        ))
     }
 
     fn line_blocked(&self, ax: f32, ay: f32, bx: f32, by: f32) -> bool {
@@ -340,6 +576,12 @@ impl NavGrid {
             }
         }
         false
+    }
+
+    /// Whether the straight segment between two world points stays on free
+    /// cells.
+    pub fn segment_walkable(&self, ax: f32, ay: f32, bx: f32, by: f32) -> bool {
+        !self.line_blocked(ax, ay, bx, by)
     }
 
     fn smooth_path(&self, path: &[(f32, f32)]) -> Vec<(f32, f32)> {
@@ -368,8 +610,8 @@ impl NavGrid {
     /// A* over cells, returning world-space waypoints (unsmoothed cells then
     /// line-of-sight smoothing). Returns `None` when unreachable.
     pub fn find_path(&self, from_x: f32, from_y: f32, to_x: f32, to_y: f32) -> Option<Vec<(f32, f32)>> {
-        let (sx, sy) = self.nearest_unblocked(from_x, from_y, 5)?;
-        let (gx, gy) = self.nearest_unblocked(to_x, to_y, 8)?;
+        let (sx, sy) = self.nearest_unblocked(from_x, from_y, self.rings(NAV_START_SNAP_CM))?;
+        let (gx, gy) = self.nearest_unblocked(to_x, to_y, self.rings(NAV_GOAL_SNAP_CM))?;
         let (scx, scy) = self.world_to_cell(sx, sy)?;
         let (gcx, gcy) = self.world_to_cell(gx, gy)?;
         if scx == gcx && scy == gcy {
@@ -530,10 +772,19 @@ impl NavGrid {
         None
     }
 
-    /// Path as game `Vec3` waypoints, preserving the caller's Z.
+    /// Path as game `Vec3` waypoints standing on the floor where it is known
+    /// (the caller's goal z otherwise).
     pub fn find_path_vec3(&self, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
-        self.find_path(from.x, from.y, to.x, to.y)
-            .map(|pts| pts.into_iter().map(|(x, y)| Vec3::new(x, y, to.z)).collect())
+        self.find_path(from.x, from.y, to.x, to.y).map(|pts| {
+            pts.into_iter()
+                .map(|(x, y)| self.on_floor(Vec3::new(x, y, to.z)))
+                .collect()
+        })
+    }
+
+    /// Count of cells carrying any of `flags`.
+    pub fn flag_cell_count(&self, flags: u8) -> usize {
+        self.blocked.iter().filter(|&&b| b & flags != 0).count()
     }
 
     pub fn blocked_cell_count(&self) -> usize {

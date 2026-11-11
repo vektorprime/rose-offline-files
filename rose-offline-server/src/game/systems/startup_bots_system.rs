@@ -212,12 +212,26 @@ fn spawn_bot(
     .expect("Failed to join startup bot into zone");
 }
 
+/// How far a spawn spot may move to stand on walkable ground.
+const SPAWN_GROUND_SNAP_CM: f32 = 3000.0;
+
+/// `point` moved onto the nearest walkable ground of the zone's anchored
+/// areas, standing on the floor (spawn anchors are XY placements: random
+/// offsets land on cliffs, in moats or inside buildings).
+fn on_walkable_ground(zone_data: &rose_data::ZoneData, point: bevy::math::Vec3) -> bevy::math::Vec3 {
+    zone_data
+        .nav_grid
+        .as_ref()
+        .and_then(|nav_grid| nav_grid.rescue_point(point, SPAWN_GROUND_SNAP_CM))
+        .unwrap_or(point)
+}
+
 /// Spawns a bot at a random point within `spread` cm of the given anchor.
 fn spawn_at_anchor(
     rng: &mut impl Rng,
     anchor: bevy::math::Vec3,
     spread: f32,
-    zone_id: rose_data::ZoneId,
+    zone_data: &rose_data::ZoneData,
 ) -> Position {
     let position = anchor
         + Vec3::new(
@@ -225,7 +239,7 @@ fn spawn_at_anchor(
             rng.gen_range(-spread..spread),
             0.0,
         );
-    Position::new(position, zone_id)
+    Position::new(on_walkable_ground(zone_data, position), zone_data.id)
 }
 
 /// Town bot spawn: a random spot spread across the town, anchored on a random
@@ -246,7 +260,7 @@ fn town_spawn_position(
         zone_data.start_position
     };
 
-    spawn_at_anchor(rng, base, TOWN_SPREAD, zone_data.id)
+    spawn_at_anchor(rng, base, TOWN_SPREAD, zone_data)
 }
 
 /// Spawns a vendor bot at a random spot away from NPCs and other vendors, so
@@ -277,6 +291,7 @@ fn spawn_vendor_position(
                 angle.sin() * distance,
                 0.0,
             );
+        let candidate = on_walkable_ground(zone_data, candidate);
         let candidate_xy = candidate.xy();
 
         if used_positions
@@ -289,12 +304,15 @@ fn spawn_vendor_position(
     }
 
     // Fallback: a random open spot anywhere in the town.
-    let position = zone_data.start_position
-        + Vec3::new(
-            rng.gen_range(-800.0..800.0),
-            rng.gen_range(-800.0..800.0),
-            0.0,
-        );
+    let position = on_walkable_ground(
+        zone_data,
+        zone_data.start_position
+            + Vec3::new(
+                rng.gen_range(-800.0..800.0),
+                rng.gen_range(-800.0..800.0),
+                0.0,
+            ),
+    );
     used_positions.push(position.xy());
     Position::new(position, zone_data.id)
 }
@@ -385,7 +403,7 @@ pub fn startup_bots_system(
                     }
 
                     let level = rng.gen_range(level_min..=level_max);
-                    let position = spawn_at_anchor(&mut rng, anchor, 150.0, zone_id);
+                    let position = spawn_at_anchor(&mut rng, anchor, 150.0, zone_data);
                     let bot_name = bot_names.next_unique_name(&mut rng);
 
                     spawn_bot(

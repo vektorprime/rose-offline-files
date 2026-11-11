@@ -46,6 +46,25 @@ use crate::game::{
 };
 
 const DAMAGE_REWARD_EXPIRE_TIME: Duration = Duration::from_secs(5 * 60);
+/// How far an AI wander / retreat point may move to reach walkable ground.
+const AI_MOVE_SNAP_CM: f32 = 800.0;
+
+/// `destination` moved onto ground the entity at `position` can walk to, or
+/// `None` when nothing near it is reachable (the move is then skipped).
+fn ai_reachable_destination(
+    game_data: &GameData,
+    position: &Position,
+    destination: Vec3,
+) -> Option<Vec3> {
+    match game_data
+        .zones
+        .get_zone(position.zone_id)
+        .and_then(|zone| zone.nav_grid.as_ref())
+    {
+        Some(nav_grid) => nav_grid.reachable_point(position.position, destination, AI_MOVE_SNAP_CM),
+        None => Some(destination),
+    }
+}
 
 #[derive(QueryData)]
 #[query_data(mutable)]
@@ -855,6 +874,7 @@ fn ai_action_attack_near_char(
 
 fn ai_action_move_away_from_target(
     ai_system_parameters: &mut AiSystemParameters,
+    ai_system_resources: &AiSystemResources,
     ai_parameters: &mut AiParameters,
     move_mode: AipMoveMode,
     distance: i32,
@@ -872,6 +892,13 @@ fn ai_action_move_away_from_target(
             let move_vector = distance as f32 * direction_away_from_target;
             // Preserve Z coordinate from source position
             let destination = source_position + Vec3::new(move_vector.x, move_vector.y, 0.0);
+            let Some(destination) = ai_reachable_destination(
+                &ai_system_resources.game_data,
+                ai_parameters.source.position,
+                destination,
+            ) else {
+                return;
+            };
 
             ai_system_parameters
                 .commands
@@ -883,6 +910,7 @@ fn ai_action_move_away_from_target(
 
 fn ai_action_move_random_distance(
     ai_system_parameters: &mut AiSystemParameters,
+    ai_system_resources: &AiSystemResources,
     ai_parameters: &mut AiParameters,
     move_origin: AipMoveOrigin,
     move_mode: AipMoveMode,
@@ -912,6 +940,13 @@ fn ai_action_move_random_distance(
         };
         // Preserve Z coordinate from move_origin
         let destination = move_origin + Vec3::new(dx as f32, dy as f32, 0.0);
+        let Some(destination) = ai_reachable_destination(
+            &ai_system_resources.game_data,
+            ai_parameters.source.position,
+            destination,
+        ) else {
+            return;
+        };
         ai_system_parameters
             .commands
             .entity(ai_parameters.source.entity)
@@ -1530,6 +1565,7 @@ fn npc_ai_do_actions(
             AipAction::Stop => ai_action_stop(ai_system_parameters, ai_parameters),
             AipAction::MoveAwayFromTarget(move_mode, distance) => ai_action_move_away_from_target(
                 ai_system_parameters,
+                ai_system_resources,
                 ai_parameters,
                 move_mode,
                 distance,
@@ -1537,6 +1573,7 @@ fn npc_ai_do_actions(
             AipAction::MoveRandomDistance(move_origin, move_mode, distance) => {
                 ai_action_move_random_distance(
                     ai_system_parameters,
+                    ai_system_resources,
                     ai_parameters,
                     move_origin,
                     move_mode,

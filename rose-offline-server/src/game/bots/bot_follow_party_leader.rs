@@ -1,14 +1,18 @@
 use bevy::{
     ecs::query::QueryData,
     math::{Vec2, Vec3Swizzles},
-    prelude::{Commands, Component, Entity, Query, With},
+    prelude::{Commands, Component, Entity, Query, Res, With},
 };
 use big_brain::prelude::{ActionBuilder, ActionState, Actor, Score, ScorerBuilder};
 
 use crate::game::{
     bots::{BotQueryFilterAlive, BotQueryFilterAliveNoTarget, BotCombatTarget},
     components::{Command, MoveMode, NextCommand, Party, PartyMembership, Position},
+    GameData,
 };
+
+/// How far a formation place may move to stand on ground the leader can reach.
+const FORMATION_SNAP_CM: f32 = 600.0;
 
 use super::Dead;
 
@@ -105,6 +109,7 @@ pub fn action_follow_party_leader(
     query_party: Query<&Party>,
     query_owner: Query<(&Position, Option<&Dead>)>,
     query_owner_move_mode: Query<&MoveMode>,
+    game_data: Res<GameData>,
 ) {
     for (&Actor(entity), mut state) in query.iter_mut() {
         let Ok(bot) = query_bot.get(entity) else {
@@ -161,8 +166,22 @@ pub fn action_follow_party_leader(
                     .try_normalize()
                     .unwrap_or(Vec2::X);
                 let offset = Vec2::from_angle(angle).rotate(from_leader) * FORMATION_DISTANCE;
-                let destination =
+                let slot_position =
                     owner_position.position + bevy::math::Vec3::new(offset.x, offset.y, 0.0);
+                // Beside the leader on ground they share, not over a wall,
+                // down a bank or in the water next to them.
+                let destination = game_data
+                    .zones
+                    .get_zone(owner_position.zone_id)
+                    .and_then(|zone| zone.nav_grid.as_ref())
+                    .and_then(|nav_grid| {
+                        nav_grid.reachable_point(
+                            owner_position.position,
+                            slot_position,
+                            FORMATION_SNAP_CM,
+                        )
+                    })
+                    .unwrap_or(slot_position);
 
                 // Keep the leader's pace: walk with a walking leader in town,
                 // run to catch up when far behind.

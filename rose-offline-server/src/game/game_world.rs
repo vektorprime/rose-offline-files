@@ -20,7 +20,7 @@ use crate::game::llm::{
 };
 use crate::game::{
     api::LlmBotManager,
-    bots::{names::BotNames, bot_chase_steering_system, bot_navigation_system, bot_separation_system, BotPlugin, process_llm_bot_creations_system},
+    bots::{names::BotNames, bot_chase_steering_system, bot_navigation_system, bot_rescue_stranded_system, bot_separation_system, BotPlugin, process_llm_bot_creations_system},
     events::{
         BankEvent, ChatCommandEvent, ChatMessageEvent, ClanEvent, DamageEvent, EquipmentEvent, ItemLifeEvent,
         NpcStoreEvent, PartyEvent, PartyMemberEvent, PersonalStoreEvent, PickupItemEvent,
@@ -246,6 +246,8 @@ impl GameWorld {
                                 // (attack chase etc.) set by command_system above.
                                 bot_chase_steering_system,
                                 bot_separation_system,
+                                // Puts back bots stranded off walkable ground.
+                                bot_rescue_stranded_system,
                                 (use_ammo_system, pickup_item_system),
                             )
                                 .chain(),
